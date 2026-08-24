@@ -2,66 +2,12 @@ import '../style.css'
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import type {
-  BackgroundMessage,
-  BackgroundResponse,
-  BackendWebauthnAuthenticationFinishResponse,
-  BackendWebauthnBeginResponse,
-  BackendWebauthnRegistrationFinishResponse,
-  BuildSendTxRequest,
-  BuildSendTxResponse,
-  CreateOrConnectFreighterRequest,
-  CreateOrConnectFreighterResponse,
-  CreateOrConnectPhantomRequest,
-  CreateOrConnectPhantomResponse,
-  GetAccountsResponse,
-  GetSmartAccountBalancesRequest,
-  GetSmartAccountBalancesResponse,
-  GetSmartAccountTransactionsRequest,
-  GetSmartAccountTransactionsResponse,
-  GetAssetIconDataUrlsRequest,
-  GetAssetIconDataUrlsResponse,
-  GetMarketPricesRequest,
-  GetMarketPricesResponse,
-  GetSwapTokenCatalogRequest,
-  GetSwapTokenCatalogResponse,
-  GetSwapQuoteRequest,
-  GetSwapQuoteResponse,
-  PrepareSwapTxRequest,
-  PrepareSwapTxResponse,
-  RecordKnownSacProbeRequest,
-  SetupSwapRulesRequest,
-  SetupSwapRulesResponse,
-  GetSetupStateResponse,
-  ImportMnemonicAccountRequest,
-  ImportMnemonicAccountResponse,
-  ListPendingDappRequestsResponse,
-  MultisigProposal,
-  PendingDappRequest,
-  SerializableError,
-  SetSetupStateRequest,
-  SetActiveAccountRequest,
-  StoredAccount,
-  SmartAccountBalanceRow,
-  UnlockMnemonicVaultRequest,
-} from '@latch/types'
-
-import { isAllowed, isConnected, setAllowed, getAddress } from '@stellar/freighter-api'
-import { startAuthentication, startRegistration } from '@simplewebauthn/browser'
-import bs58 from 'bs58'
-import { ExternalLink } from 'lucide-react'
-
-import logoUrl from 'url:../../assets/brand/latch-logo.svg'
-import biometricsUrl from 'url:../../assets/icons/biometrics.svg'
-import successAvatarUrl from 'url:../../assets/avatars/success.png'
+import type { GetSetupStateResponse, MultisigProposal, SetActiveAccountRequest } from '@latch/types'
 
 import { HistoryScreen } from './screens/history/HistoryScreen'
 import { HomeScreen } from './screens/HomeScreen'
-import { ImportSeedScreen } from './screens/import-seed/ImportSeedScreen'
-import { useSeedPhraseWords } from './screens/import-seed/useSeedPhraseWords'
 import { TransactionDetailScreen } from './screens/transaction-detail/TransactionDetailScreen'
 import { MigrationScreen } from './screens/MigrationScreen'
-import { UnlockMnemonicScreen } from './screens/UnlockMnemonicScreen'
 import { SettingsScreen } from './screens/SettingsScreen'
 import {
   MultisigRouteViews,
@@ -69,16 +15,8 @@ import {
   useMultisigJoinTokenOnMount,
 } from './multisig/MultisigRouteViews'
 import { parseMultisigJoinTokenFromLocation } from './lib/multisigDeepLink'
-import {
-  apiGetMultisigProposalsBannerDismissed,
-  apiSyncLocalMultisigAccounts,
-} from './lib/multisigFlow'
-import { createMultisigSendProposalWithSetup } from './lib/multisigProposal'
+import { apiGetMultisigProposalsBannerDismissed } from './lib/multisigFlow'
 import { ExploreScreen } from './screens/explore/ExploreScreen'
-import { SwapScreen, swapWalletLabel } from './screens/SwapScreen'
-import { ConfirmSwapScreen } from './screens/ConfirmSwapScreen'
-import { SwapFailureScreen } from './screens/swap/SwapFailureScreen'
-import { SwapSuccessScreen } from './screens/swap/SwapSuccessScreen'
 import { SwapCatalogLoadingOverlay } from './screens/swap/components/SwapCatalogLoadingOverlay'
 import { SwapTransactionLoadingOverlay } from './screens/swap/components/SwapTransactionLoadingOverlay'
 import { openOnboardingTab } from './onboarding/openOnboardingTab'
@@ -88,324 +26,88 @@ import { MainBottomNav, type MainTab } from './screens/home/components/MainBotto
 import { storedAccountLabel } from './lib/storedAccountLabel'
 import { FullScreenLoaderOverlay } from './components/FullScreenLoaderOverlay'
 import { markMigrationHomePromoCompleted } from './lib/migrationHomePrefs'
-import { GrantAccessScreen } from './screens/dapp/GrantAccessScreen'
-import { ExternalSignReviewScreen } from './screens/dapp/ExternalSignReviewScreen'
-import {
-  extractTransactionHash,
-  signAndSubmitBuiltTx,
-  signWithoutSubmitBuiltTx,
-} from './lib/signBuiltTx'
-import { debugAgentLog } from './lib/debugAgentLog'
-
-import {
-  assertBeginOptionsRpIdMatchesExtension,
-  assertRegistrationCeremonyForFinish,
-  enrichWebauthnRpIdHashErrorMessage,
-  formatWebauthnBrowserError,
-  nextPasskeyAccountDisplayName,
-  prepareAuthenticationOptionsForGet,
-  prepareRegistrationOptionsForCreate,
-} from './webauthn/passkey'
-import { openPasskeyBridgeAndWait } from './webauthn/passkeyBridge'
-import { bytesToHex } from './webauthn/utils'
-import type { SwapDraft, SwapQuoteVm, SwapTokenVm } from './swap/swapVm'
-import {
-  mergeSwapTokenCatalogs,
-  pickDefaultReceiveTokenId,
-  swapQuotePayloadToVm,
-} from './swap/swapVm'
-import {
-  buildTransactionDetail,
-  groupHistoryItems,
-  iconUrlForCode,
-  mapTransactionToHistoryItem,
-} from './lib/historyFormat'
-import type { HistorySectionVm } from './types/history'
-import type { TransactionDetailVm } from './types/transaction-detail'
-import { INITIAL_SEND_DRAFT, type SendDraft, type SendResult, type SendStep } from './types/send'
-import { SendFlow } from './screens/send/SendFlow'
+import { RenameAccountDialog } from './components/RenameAccountDialog'
+import { OpenSetupTabScreen } from './screens/setup/OpenSetupTabScreen'
+import { MigrationSuccessScreen } from './screens/migration/MigrationSuccessScreen'
 import { ReceiveFlow } from './screens/receive/ReceiveFlow'
 import { FundScreen } from './screens/fund/FundScreen'
-import { saveToAddressBook } from './screens/send/useAddressBook'
+import { buildTransactionDetail } from './lib/historyFormat'
+import type { TransactionDetailVm } from './types/transaction-detail'
+import { friendlyError, sendToBackground } from './lib/backgroundClient'
+import { openSidePanel, setDefaultSurface } from './lib/uiSurface'
 import {
-  buildSendRequestFromDraft,
-  buildSetupRequestFromDraft,
-  enrichSendFailureDetail,
-  ensureSendRulesConfigured,
-  explainSendDraftNotBuildable,
-  isNoContextRuleError,
-  isBuildSendMissingSetupError,
-  isPrepareSignMissingSetupError,
-  isSwapRuleReconfigureError,
-  passkeySetupPrerequisiteError,
-} from './lib/sendTx'
-import {
-  buildSetupSwapRequestFromQuote,
-  swapBuildNeedsSignerReconfigure,
-  swapSetupPrerequisiteError,
-} from './lib/swapTx'
-
-type Theme = 'dark' | 'light'
-type Surface = 'popup' | 'sidepanel'
-type UiSurfacePreference = 'popup' | 'sidepanel'
-type Page = 'main' | 'settings'
-
-type Route =
-  | 'welcome'
-  | 'chooseSigner'
-  | 'createPasskey'
-  | 'passkeyCreated'
-  | 'addAccount'
-  | 'addAccountPasskey'
-  | 'createMultisig'
-  | 'addMultisigOwners'
-  | 'multisigThreshold'
-  | 'multisigReviewDeploy'
-  | 'multisigSuccess'
-  | 'joinMultisig'
-  | 'multisigProposals'
-  | 'multisigProposalDetail'
-  | 'multisigWallets'
-  | 'importSeed'
-  | 'importSeedEncrypt'
-  | 'unlockMnemonic'
-  | 'home'
-  | 'explore'
-  | 'history'
-  | 'transactionDetail'
-  | 'swap'
-  | 'swapConfirm'
-  | 'send'
-  | 'receive'
-  | 'fund'
-  | 'dappApproval'
-  | 'migration'
-  | 'migrationSuccess'
-
-type SignerId = 'freighter' | 'phantom' | 'passkey'
-
-/**
- * WebAuthn must run in the same document update as the user click as much as possible.
- * The global loading screen replaces route content and unmounts the button; Chrome (esp. side panel) then drops transient activation, so the passkey sheet never appears.
- */
-function routeKeepsUiMountedForWebauthn(route: Route): boolean {
-  return (
-    route === 'createPasskey' ||
-    route === 'addAccountPasskey' ||
-    route === 'send' ||
-    route === 'swapConfirm' ||
-    route === 'addMultisigOwners' ||
-    route === 'joinMultisig' ||
-    route === 'multisigProposalDetail' ||
-    route === 'fund'
-  )
-}
-
-const ROUTES_GATED_BY_MNEMONIC_UNLOCK: Route[] = [
-  'home',
-  'explore',
-  'history',
-  'transactionDetail',
-  'swap',
-  'swapConfirm',
-  'send',
-  'receive',
-  'fund',
-  'migration',
-  'migrationSuccess',
-  'dappApproval',
-]
-
-function resolveMainRoute(args: { needsMnemonicUnlock: boolean; preferred?: Route }): Route {
-  if (args.needsMnemonicUnlock) return 'unlockMnemonic'
-  return args.preferred ?? 'home'
-}
-
-function needsMnemonicUnlockFromAccounts(
-  accounts: StoredAccount[],
-  activeAccountId: string | undefined,
-  hasVault: boolean | undefined,
-  signerLoaded: boolean | undefined
-): boolean {
-  if (!activeAccountId || !hasVault || signerLoaded !== false) return false
-  const active = accounts.find((a) => a.id === activeAccountId)
-  return active?.mode === 'mnemonic'
-}
-
-const ONBOARDING_ONLY_ROUTES: Route[] = [
-  'welcome',
-  'chooseSigner',
-  'createPasskey',
-  'passkeyCreated',
-  'importSeed',
-  'importSeedEncrypt',
-]
-
-function isOnboardingOnlyRoute(route: Route): boolean {
-  return ONBOARDING_ONLY_ROUTES.includes(route)
-}
-
-const STORAGE_KEYS = {
-  theme: 'latch.theme',
-  uiSurface: 'latch.uiSurface',
-} as const
-
-async function sendToBackground<TPayload, TData>(
-  message: BackgroundMessage<TPayload>
-): Promise<BackgroundResponse<TData>> {
-  return (await chrome.runtime.sendMessage(message)) as BackgroundResponse<TData>
-}
-
-function readAddressFromFreighterGetAddressResult(v: unknown): string | undefined {
-  if (typeof v === 'string') return v
-  if (typeof v === 'object' && v) {
-    const maybe = v as { address?: unknown }
-    if (typeof maybe.address === 'string') return maybe.address
-  }
-  return undefined
-}
-
-type PhantomSolanaProvider = {
-  connect: () => Promise<{ publicKey?: { toBase58?: () => string } } | undefined>
-  publicKey?: { toBase58?: () => string }
-  signMessage: (msg: Uint8Array) => Promise<{ signature?: Uint8Array } | Uint8Array>
-}
-
-function useTheme() {
-  const [theme, setTheme] = useState<Theme>('dark')
-
-  useEffect(() => {
-    chrome.storage.local
-      .get([STORAGE_KEYS.theme])
-      .then((res) => {
-        const t = res[STORAGE_KEYS.theme]
-        if (t === 'light' || t === 'dark') setTheme(t)
-      })
-      .catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('theme-light', theme === 'light')
-    void chrome.storage.local.set({ [STORAGE_KEYS.theme]: theme })
-  }, [theme])
-
-  return { theme, setTheme }
-}
-
-function useUiSurfacePreference() {
-  const [pref, setPref] = useState<UiSurfacePreference>('popup')
-
-  useEffect(() => {
-    chrome.storage.local
-      .get([STORAGE_KEYS.uiSurface])
-      .then((res) => {
-        const v = res[STORAGE_KEYS.uiSurface]
-        if (v === 'popup' || v === 'sidepanel') setPref(v)
-      })
-      .catch(() => {})
-  }, [])
-
-  const persist = (v: UiSurfacePreference) => {
-    setPref(v)
-    void chrome.storage.local.set({ [STORAGE_KEYS.uiSurface]: v })
-  }
-
-  return { pref, setPref: persist }
-}
-
-const headerIconClass = 'h-[18px] w-[18px]'
-
-async function openSidePanel() {
-  if (!('sidePanel' in chrome)) return
-  const win = await chrome.windows.getLastFocused()
-  if (!win?.id) return
-  await chrome.sidePanel.open({ windowId: win.id })
-}
-
-async function setDefaultSurface(pref: UiSurfacePreference) {
-  await chrome.storage.local.set({ [STORAGE_KEYS.uiSurface]: pref })
-}
-
-function friendlyError(e?: SerializableError): string {
-  if (!e) return 'Unknown error'
-  if (e.code === 'timeout') return 'Request timed out. Please try again.'
-  if (e.status === 403) return 'Not authorized.'
-  if (e.code === 'mnemonic_locked') {
-    return 'Seed signer is not loaded. Unlock with your saved password or re-import your recovery phrase.'
-  }
-  return e.message
-}
+  MULTISIG_ROUTES,
+  ROUTES_GATED_BY_MNEMONIC_UNLOCK,
+  resolveMainRoute,
+  routeKeepsUiMountedForWebauthn,
+  type Page,
+  type Route,
+  type Surface,
+} from './routing/routes'
+import { useTheme } from './hooks/useTheme'
+import { useUiSurfacePreference } from './hooks/useUiSurfacePreference'
+import { useAccountsHydration } from './hooks/useAccountsHydration'
+import { usePortfolioAndHistory } from './hooks/usePortfolioAndHistory'
+import { SwapRouteViews, type SwapOverlayFlags } from './swap/SwapRouteViews'
+import { SendRouteViews } from './send/SendRouteViews'
+import { AccountRouteViews } from './accounts/AccountRouteViews'
+import { DappRouteViews } from './dapp/DappRouteViews'
 
 export function LatchRoot({ surface }: { surface: Surface }) {
-  /**
-   * Chrome does not reliably run WebAuthn inside the extension side panel (hangs with no UI).
-   * Popup uses in-page credentials; side panel opens the shared `tabs/passkey-bridge` window.
-   */
-  async function webauthnCredential(
-    mode: 'registration' | 'authentication',
-    optionsJSON: unknown
-  ): Promise<unknown> {
-    try {
-      if (surface === 'sidepanel') {
-        return await openPasskeyBridgeAndWait({ mode, optionsJSON })
-      }
-      if (mode === 'registration') {
-        return await startRegistration({
-          optionsJSON,
-        } as unknown as Parameters<typeof startRegistration>[0])
-      }
-      return await startAuthentication({
-        optionsJSON,
-      } as unknown as Parameters<typeof startAuthentication>[0])
-    } catch (e) {
-      throw new Error(formatWebauthnBrowserError(e))
-    }
-  }
-
   useTheme()
   const { pref, setPref } = useUiSurfacePreference()
-
-  // Product direction: ship passkey-only for now, but keep other signer integrations ready to re-enable.
-  const ENABLE_OTHER_SIGNERS = false
 
   const [route, setRoute] = useState<Route>(() =>
     parseMultisigJoinTokenFromLocation() ? 'joinMultisig' : 'home'
   )
-  /** True when `chooseSigner` was opened from "I Have a Wallet" (passkey should authenticate, not register). */
-  const [chooseSignerForExistingWallet, setChooseSignerForExistingWallet] = useState(false)
   const [page, setPage] = useState<Page>('main')
-  const [selectedSigner, setSelectedSigner] = useState<SignerId>('passkey')
 
   const [loading, setLoading] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const [setupState, setSetupState] = useState<GetSetupStateResponse['setupState']>('new')
-  const [accountsHydrated, setAccountsHydrated] = useState(false)
-  /** True only after GET_ACCOUNTS returned successfully (empty or not). False on timeout/error — never treat that as "needs setup". */
-  const [accountsLoadSucceeded, setAccountsLoadSucceeded] = useState(false)
-  const onboardingTabOpenedRef = useRef(false)
-  const [accounts, setAccounts] = useState<StoredAccount[]>([])
-  const [activeAccountId, setActiveAccountId] = useState<string | undefined>(undefined)
-  const [pendingDappRequests, setPendingDappRequests] = useState<PendingDappRequest[]>([])
-  const [dappBusy, setDappBusy] = useState(false)
-  const [dappError, setDappError] = useState<string | null>(null)
-  const pendingDappRequestsRef = useRef(pendingDappRequests)
-  pendingDappRequestsRef.current = pendingDappRequests
-  const [dappProgressLabel, setDappProgressLabel] = useState<string | null>(null)
-  const [dappNetwork, setDappNetwork] = useState<'testnet' | 'mainnet'>('testnet')
-  const [activeNetwork, setActiveNetwork] = useState<'testnet' | 'mainnet'>('testnet')
-  const [networkLabel, setNetworkLabel] = useState('Stellar Testnet')
+  const {
+    setupState,
+    setSetupState,
+    accountsHydrated,
+    accountsLoadSucceeded,
+    onboardingTabOpenedRef,
+    accounts,
+    activeAccountId,
+    setActiveAccountId,
+    activeNetwork,
+    setActiveNetwork,
+    networkLabel,
+    setNetworkLabel,
+    activeAccount,
+    activeAccountLabel,
+    needsMnemonicUnlock,
+    persistSetupHasAccount,
+    refreshAccounts,
+  } = useAccountsHydration({ route, setRoute })
 
-  const activeAccount = useMemo(
-    () => accounts.find((a) => a.id === activeAccountId) ?? accounts[0],
-    [accounts, activeAccountId]
-  )
-
-  const activeAccountLabel = useMemo(() => {
-    if (!activeAccount) return 'Account'
-    const i = accounts.findIndex((x) => x.id === activeAccount.id)
-    return storedAccountLabel(activeAccount, i >= 0 ? i : 0)
-  }, [accounts, activeAccount])
+  const {
+    portfolioRows,
+    totalBalanceUsd,
+    portfolioLoading,
+    portfolioHydrated,
+    portfolioError,
+    historySections,
+    historyLoading,
+    historyError,
+    recentActivityItems,
+    loadHistory,
+    loadPortfolio,
+  } = usePortfolioAndHistory({
+    accounts,
+    activeAccountId,
+    activeNetwork,
+    route,
+    page,
+    needsMnemonicUnlock,
+    setupState,
+    accountsHydrated,
+    accountsLoadSucceeded,
+  })
 
   const [renameAccountId, setRenameAccountId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
@@ -416,209 +118,19 @@ export function LatchRoot({ surface }: { surface: Surface }) {
   const [multisigProposals, setMultisigProposals] = useState<MultisigProposal[]>([])
   const [, setMultisigBannerDismissedIds] = useState<string[]>([])
 
-  const [swapDraft, setSwapDraft] = useState<SwapDraft | null>(null)
-  const [swapQuote, setSwapQuote] = useState<SwapQuoteVm | null>(null)
-  const [swapPayTokenCatalog, setSwapPayTokenCatalog] = useState<SwapTokenVm[]>([])
-  const [swapReceiveTokenCatalog, setSwapReceiveTokenCatalog] = useState<SwapTokenVm[]>([])
-  const [swapPreferredReceiveTokenIds, setSwapPreferredReceiveTokenIds] = useState<string[]>([])
-  const [swapCatalogLoading, setSwapCatalogLoading] = useState(false)
-  const [swapBusy, setSwapBusy] = useState(false)
-  const [swapStep, setSwapStep] = useState<'confirm' | 'success' | 'failure'>('confirm')
-  const [swapFailureDetail, setSwapFailureDetail] = useState<string | null>(null)
-  const [swapTokenPriceUsdBySymbol, setSwapTokenPriceUsdBySymbol] = useState<
-    Record<string, number>
-  >({})
-
-  const [sendStep, setSendStep] = useState<SendStep>('selectToken')
-  const [sendDraft, setSendDraft] = useState<SendDraft>(INITIAL_SEND_DRAFT)
-  const [sendResult, setSendResult] = useState<SendResult | null>(null)
-  const [sendProgressLabel, setSendProgressLabel] = useState<string | null>(null)
-  const [sendError, setSendError] = useState<string | null>(null)
-  const [sendTokenPriceUsd, setSendTokenPriceUsd] = useState<number | null>(null)
-
-  const [activeAccountHasMnemonicVault, setActiveAccountHasMnemonicVault] = useState(false)
-  const [activeAccountMnemonicSignerLoaded, setActiveAccountMnemonicSignerLoaded] = useState(false)
   const [unlockReturnRoute, setUnlockReturnRoute] = useState<'home' | 'migration' | null>(null)
-  const [portfolioRows, setPortfolioRows] = useState<SmartAccountBalanceRow[]>([])
-  const [totalBalanceUsd, setTotalBalanceUsd] = useState<string | null>(null)
-  const [portfolioLoading, setPortfolioLoading] = useState(false)
-  const [portfolioHydrated, setPortfolioHydrated] = useState(false)
-  const [portfolioError, setPortfolioError] = useState<string | null>(null)
-  const [historySections, setHistorySections] = useState<HistorySectionVm[]>([])
-  const [historyLoading, setHistoryLoading] = useState(false)
-  const [historyError, setHistoryError] = useState<string | null>(null)
-  const portfolioRowsRef = useRef(portfolioRows)
-  portfolioRowsRef.current = portfolioRows
-  const portfolioHydratedRef = useRef(false)
   const [transactionDetail, setTransactionDetail] = useState<TransactionDetailVm | null>(null)
-  const [importSeedStep, setImportSeedStep] = useState<'phrase' | 'encrypt'>('phrase')
-  const [pendingMnemonic, setPendingMnemonic] = useState('')
-  const seedWords = useSeedPhraseWords()
-  const [seedExtensionPassphrase, setSeedExtensionPassphrase] = useState('')
-  const [seedEncryptionPassword, setSeedEncryptionPassword] = useState('')
-  const [seedEncryptionConfirm, setSeedEncryptionConfirm] = useState('')
-  const [unlockVaultPassword, setUnlockVaultPassword] = useState('')
   const [transactionDetailReturnRoute, setTransactionDetailReturnRoute] = useState<Route>('history')
 
-  const needsMnemonicUnlock = useMemo(
-    () =>
-      activeAccount?.mode === 'mnemonic' &&
-      activeAccountHasMnemonicVault &&
-      !activeAccountMnemonicSignerLoaded,
-    [activeAccount, activeAccountHasMnemonicVault, activeAccountMnemonicSignerLoaded]
-  )
-
-  const recentActivityItems = useMemo(
-    () => historySections.flatMap((section) => section.items),
-    [historySections]
-  )
-
-  const [swapIconByCode, setSwapIconByCode] = useState<Record<string, string | null>>({})
-
-  const mapSwapTokenVm = useCallback(
-    (t: {
-      id: string
-      symbol: string
-      name: string
-      assetId: string
-      contractId: string
-      decimals: number
-      balance: string
-      issuer?: string
-      iconUrl?: string | null
-    }): SwapTokenVm => ({
-      id: t.id,
-      symbol: t.symbol,
-      name: t.name,
-      assetId: t.assetId,
-      contractId: t.contractId,
-      decimals: t.decimals,
-      balance: t.balance,
-      issuer: t.issuer,
-      iconUrl: t.iconUrl,
-    }),
-    []
-  )
-
-  const loadSwapCatalog = useCallback(async () => {
-    if (!activeAccount?.id) return
-    setSwapCatalogLoading(true)
-    try {
-      const res = await sendToBackground<GetSwapTokenCatalogRequest, GetSwapTokenCatalogResponse>({
-        type: 'GET_SWAP_TOKEN_CATALOG',
-        payload: { accountId: activeAccount.id },
-      })
-      if (res.ok && res.data) {
-        setSwapPayTokenCatalog(res.data.payTokens.map(mapSwapTokenVm))
-        setSwapReceiveTokenCatalog(res.data.receiveTokens.map(mapSwapTokenVm))
-        setSwapPreferredReceiveTokenIds(res.data.preferredReceiveTokenIds)
-      }
-    } finally {
-      setSwapCatalogLoading(false)
-    }
-  }, [activeAccount?.id, mapSwapTokenVm])
-
-  useEffect(() => {
-    if (route !== 'swap' && route !== 'swapConfirm') return
-    void loadSwapCatalog()
-  }, [route, loadSwapCatalog])
-
-  const swapTokensUnion = useMemo(
-    () => mergeSwapTokenCatalogs(swapPayTokenCatalog, swapReceiveTokenCatalog),
-    [swapPayTokenCatalog, swapReceiveTokenCatalog]
-  )
-
-  useEffect(() => {
-    if (route !== 'swap' && route !== 'swapConfirm') return
-    const codes = swapTokensUnion.map((t) => t.symbol).filter(Boolean)
-    if (codes.length === 0) return
-    let cancelled = false
-    void (async () => {
-      const res = await sendToBackground<GetMarketPricesRequest, GetMarketPricesResponse>({
-        type: 'GET_MARKET_PRICES',
-        payload: { tokens: codes },
-      })
-      if (cancelled || !res.ok || !res.data) return
-      const map: Record<string, number> = {}
-      for (const [code, row] of Object.entries(res.data.pricesByCodeUpper)) {
-        if (row?.priceUsd != null) map[code] = row.priceUsd
-      }
-      setSwapTokenPriceUsdBySymbol(map)
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [route, swapTokensUnion])
-
-  useEffect(() => {
-    if (setupState !== 'has_account' || swapTokensUnion.length === 0) return
-    let cancelled = false
-    void (async () => {
-      const res = await sendToBackground<GetAssetIconDataUrlsRequest, GetAssetIconDataUrlsResponse>(
-        {
-          type: 'GET_ASSET_ICON_DATA_URLS',
-          payload: {
-            assets: swapTokensUnion.map((t) => ({
-              code: t.symbol,
-              issuer: t.issuer,
-              sacContractId: t.contractId,
-            })),
-          },
-        }
-      )
-      if (cancelled || !res.ok || !res.data) return
-      const map: Record<string, string | null> = {}
-      swapTokensUnion.forEach((t, i) => {
-        map[t.symbol] = res.data!.icons[i] ?? t.iconUrl ?? null
-      })
-      setSwapIconByCode(map)
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [setupState, swapTokensUnion])
-
-  const applySwapTokenIcons = useCallback(
-    (catalog: SwapTokenVm[]) =>
-      catalog.map((t) => ({
-        ...t,
-        iconUrl: swapIconByCode[t.symbol] ?? t.iconUrl ?? null,
-      })),
-    [swapIconByCode]
-  )
-
-  const swapPayTokenCatalogWithIcons = useMemo(
-    () => applySwapTokenIcons(swapPayTokenCatalog),
-    [applySwapTokenIcons, swapPayTokenCatalog]
-  )
-
-  const swapReceiveTokenCatalogWithIcons = useMemo(
-    () => applySwapTokenIcons(swapReceiveTokenCatalog),
-    [applySwapTokenIcons, swapReceiveTokenCatalog]
-  )
-
-  const swapTokenById = useMemo(() => {
-    const map = new Map<string, SwapTokenVm>()
-    for (const t of mergeSwapTokenCatalogs(
-      swapPayTokenCatalogWithIcons,
-      swapReceiveTokenCatalogWithIcons
-    )) {
-      map.set(t.id, t)
-    }
-    return map
-  }, [swapPayTokenCatalogWithIcons, swapReceiveTokenCatalogWithIcons])
-
-  const resolveSwapToken = useCallback((id: string) => swapTokenById.get(id), [swapTokenById])
-
-  /** Prefetch /begin options so Create / Continue does not await the network before credentials. */
-  const passkeyPrefetchRef = useRef<
-    | { kind: 'registration'; optionsJSON: unknown; displayName: string }
-    | { kind: 'authentication'; optionsJSON: unknown }
-    | null
-  >(null)
-  const [passkeyPrefetchReady, setPasskeyPrefetchReady] = useState(false)
-  const [passkeyPrefetchError, setPasskeyPrefetchError] = useState<string | null>(null)
-  const [passkeyPrefetchNonce, setPasskeyPrefetchNonce] = useState(0)
+  const openSwapRef = useRef<() => void>(() => {})
+  const openSendRef = useRef<() => void>(() => {})
+  const clearDappPendingRef = useRef<() => void>(() => {})
+  const [swapOverlayFlags, setSwapOverlayFlags] = useState<SwapOverlayFlags>({
+    catalogLoading: false,
+    payCatalogEmpty: true,
+    swapBusy: false,
+    swapStep: 'confirm',
+  })
 
   useEffect(() => {
     if (!needsMnemonicUnlock) return
@@ -634,431 +146,10 @@ export function LatchRoot({ surface }: { surface: Surface }) {
   }, [route, activeAccount?.id])
 
   useEffect(() => {
-    if (route !== 'createPasskey' && route !== 'addAccountPasskey') {
-      passkeyPrefetchRef.current = null
-      setPasskeyPrefetchReady(false)
-      setPasskeyPrefetchError(null)
-      return
-    }
-
-    let cancelled = false
-    setPasskeyPrefetchReady(false)
-    setPasskeyPrefetchError(null)
-    passkeyPrefetchRef.current = null
-
-    void (async () => {
-      try {
-        if (route === 'createPasskey') {
-          const displayName = nextPasskeyAccountDisplayName(accounts)
-          const begin = await sendToBackground<
-            { displayName?: string },
-            BackendWebauthnBeginResponse
-          >({
-            type: 'PASSKEY_REG_BEGIN',
-            payload: { displayName },
-          })
-          if (cancelled) return
-          if (!begin.ok) throw new Error(friendlyError(begin.error))
-          const optionsJSON = prepareRegistrationOptionsForCreate(
-            (begin.data as BackendWebauthnBeginResponse | undefined)?.options,
-            displayName
-          )
-          assertBeginOptionsRpIdMatchesExtension(optionsJSON)
-          passkeyPrefetchRef.current = { kind: 'registration', optionsJSON, displayName }
-        } else {
-          const begin = await sendToBackground<undefined, BackendWebauthnBeginResponse>({
-            type: 'PASSKEY_AUTH_BEGIN',
-            payload: undefined,
-          })
-          if (cancelled) return
-          if (!begin.ok) throw new Error(friendlyError(begin.error))
-          const optionsJSON = prepareAuthenticationOptionsForGet(begin.data?.options)
-          assertBeginOptionsRpIdMatchesExtension(optionsJSON)
-          passkeyPrefetchRef.current = { kind: 'authentication', optionsJSON }
-        }
-        if (!cancelled) setPasskeyPrefetchReady(true)
-      } catch (e) {
-        if (!cancelled) {
-          setPasskeyPrefetchError(e instanceof Error ? e.message : String(e))
-          passkeyPrefetchRef.current = null
-        }
-      }
-    })()
-
-    return () => {
-      cancelled = true
-    }
-    // Intentionally omit `accounts` identity: a new array reference must not
-    // cancel an in-flight ceremony or re-issue /begin while the user is creating.
-    // accounts length/contents are handled via route screen.
-  }, [route, passkeyPrefetchNonce])
-
-  useEffect(() => {
-    void sendToBackground<undefined, GetSetupStateResponse>({
-      type: 'GET_SETUP_STATE',
-      payload: undefined,
-    })
-      .then((res) => {
-        if (res.ok && res.data) setSetupState(res.data.setupState)
-      })
-      .catch(() => {})
-
-    let cancelled = false
-    void (async () => {
-      // Load accounts first so we never flash "Set up Latch" while the SW is still waking.
-      // Network is independent and can fill in after.
-      try {
-        const res = await sendToBackground<undefined, GetAccountsResponse>({
-          type: 'GET_ACCOUNTS',
-          payload: undefined,
-        })
-        if (cancelled) return
-        if (!res.ok || !res.data) {
-          setAccountsLoadSucceeded(false)
-          return
-        }
-        setAccounts(res.data.accounts)
-        setActiveAccountId(res.data.activeAccountId)
-        setActiveAccountHasMnemonicVault(Boolean(res.data.activeAccountHasMnemonicVault))
-        setActiveAccountMnemonicSignerLoaded(Boolean(res.data.activeAccountMnemonicSignerLoaded))
-        setAccountsLoadSucceeded(true)
-        if (res.data.accounts.length > 0) {
-          const locked = needsMnemonicUnlockFromAccounts(
-            res.data.accounts,
-            res.data.activeAccountId,
-            res.data.activeAccountHasMnemonicVault,
-            res.data.activeAccountMnemonicSignerLoaded
-          )
-          setRoute((prev) =>
-            prev === 'joinMultisig'
-              ? prev
-              : isOnboardingOnlyRoute(prev)
-                ? resolveMainRoute({ needsMnemonicUnlock: locked })
-                : resolveMainRoute({
-                    needsMnemonicUnlock: locked,
-                    preferred: ROUTES_GATED_BY_MNEMONIC_UNLOCK.includes(prev) ? prev : prev,
-                  })
-          )
-        }
-      } catch {
-        if (!cancelled) setAccountsLoadSucceeded(false)
-      } finally {
-        if (!cancelled) setAccountsHydrated(true)
-      }
-
-      try {
-        const netRes = await sendToBackground<
-          undefined,
-          { network: 'testnet' | 'mainnet'; networkLabel: string }
-        >({
-          type: 'GET_ACTIVE_NETWORK',
-          payload: undefined,
-        })
-        if (cancelled) return
-        if (netRes.ok && netRes.data?.network) {
-          setActiveNetwork(netRes.data.network)
-          setDappNetwork(netRes.data.network)
-          setNetworkLabel(
-            netRes.data.networkLabel ||
-              (netRes.data.network === 'mainnet' ? 'Stellar Mainnet' : 'Stellar Testnet')
-          )
-        }
-      } catch {
-        // keep defaults
-      }
-    })()
-
-    // Safety: never leave the shell stuck if the background SW is unresponsive.
-    // Do NOT mark accountsLoadSucceeded — that would falsely open "Set up Latch".
-    const hydrateWatchdog = window.setTimeout(() => {
-      setAccountsHydrated(true)
-    }, 8_000)
-
-    void loadPendingDapp().catch(() => {})
     void apiGetMultisigProposalsBannerDismissed()
       .then(setMultisigBannerDismissedIds)
       .catch(() => {})
-
-    return () => {
-      cancelled = true
-      window.clearTimeout(hydrateWatchdog)
-    }
   }, [])
-
-  // Retry GET_ACCOUNTS when the first attempt failed / timed out (keep Latch loader, never "Set up Latch").
-  useEffect(() => {
-    if (!accountsHydrated || accountsLoadSucceeded || accounts.length > 0) return
-    let cancelled = false
-    const attempt = async () => {
-      try {
-        const res = await sendToBackground<undefined, GetAccountsResponse>({
-          type: 'GET_ACCOUNTS',
-          payload: undefined,
-        })
-        if (cancelled || !res.ok || !res.data) return
-        setAccounts(res.data.accounts)
-        setActiveAccountId(res.data.activeAccountId)
-        setActiveAccountHasMnemonicVault(Boolean(res.data.activeAccountHasMnemonicVault))
-        setActiveAccountMnemonicSignerLoaded(Boolean(res.data.activeAccountMnemonicSignerLoaded))
-        setAccountsLoadSucceeded(true)
-        if (res.data.accounts.length > 0) {
-          const locked = needsMnemonicUnlockFromAccounts(
-            res.data.accounts,
-            res.data.activeAccountId,
-            res.data.activeAccountHasMnemonicVault,
-            res.data.activeAccountMnemonicSignerLoaded
-          )
-          setRoute((prev) =>
-            prev === 'joinMultisig'
-              ? prev
-              : resolveMainRoute({ needsMnemonicUnlock: locked, preferred: prev })
-          )
-        }
-      } catch {
-        // keep retrying
-      }
-    }
-    void attempt()
-    const t = window.setInterval(() => void attempt(), 2_500)
-    return () => {
-      cancelled = true
-      window.clearInterval(t)
-    }
-  }, [accountsHydrated, accountsLoadSucceeded, accounts.length])
-
-  useEffect(() => {
-    function onStorage(changes: { [key: string]: chrome.storage.StorageChange }, area: string) {
-      if (area !== 'local') return
-      if (changes['latch.pendingDappRequests']) {
-        void loadPendingDapp().catch(() => {})
-      }
-    }
-    chrome.storage.onChanged.addListener(onStorage)
-    return () => chrome.storage.onChanged.removeListener(onStorage)
-  }, [])
-
-  // Action popup / side panel close must reject pending reviews. The fallback
-  // chrome.windows.create path already does this; chrome.action.openPopup does not.
-  useEffect(() => {
-    function dismissPendingOnClose() {
-      const pending = pendingDappRequestsRef.current
-      if (pending.length === 0) return
-      for (const req of pending) {
-        void chrome.runtime.sendMessage({
-          type: 'RESOLVE_PENDING_DAPP_REQUEST',
-          payload: { requestId: req.id, approved: false },
-        } satisfies BackgroundMessage<{ requestId: string; approved: boolean }>)
-      }
-    }
-    window.addEventListener('pagehide', dismissPendingOnClose)
-    return () => window.removeEventListener('pagehide', dismissPendingOnClose)
-  }, [])
-
-  useEffect(() => {
-    if (!accountsHydrated) return
-
-    if (accounts.length > 0) {
-      onboardingTabOpenedRef.current = false
-      setRoute((prev) => {
-        if (prev === 'joinMultisig') return prev
-        if (isOnboardingOnlyRoute(prev)) {
-          return resolveMainRoute({ needsMnemonicUnlock })
-        }
-        return prev
-      })
-      return
-    }
-
-    // Only open setup when we *know* there are no accounts — not on SW timeout/error.
-    if (!accountsLoadSucceeded) return
-    if (route === 'joinMultisig') return
-
-    if (!onboardingTabOpenedRef.current) {
-      onboardingTabOpenedRef.current = true
-      void openOnboardingTab().catch(() => {})
-    }
-  }, [accountsHydrated, accountsLoadSucceeded, accounts.length, needsMnemonicUnlock, route])
-
-  async function persistSetupHasAccount(publicKey: string) {
-    const req: SetSetupStateRequest = { setupState: 'has_account', accountPublicKey: publicKey }
-    await sendToBackground<SetSetupStateRequest, unknown>({ type: 'SET_SETUP_STATE', payload: req })
-    setSetupState('has_account')
-  }
-
-  async function refreshAccounts(): Promise<
-    { accounts: StoredAccount[]; needsMnemonicUnlock: boolean } | undefined
-  > {
-    const res = await sendToBackground<undefined, GetAccountsResponse>({
-      type: 'GET_ACCOUNTS',
-      payload: undefined,
-    })
-    if (!res.ok || !res.data) return undefined
-    setAccounts(res.data.accounts)
-    setActiveAccountId(res.data.activeAccountId)
-    setActiveAccountHasMnemonicVault(Boolean(res.data.activeAccountHasMnemonicVault))
-    setActiveAccountMnemonicSignerLoaded(Boolean(res.data.activeAccountMnemonicSignerLoaded))
-    setAccountsLoadSucceeded(true)
-    setAccountsHydrated(true)
-    const locked = needsMnemonicUnlockFromAccounts(
-      res.data.accounts,
-      res.data.activeAccountId,
-      res.data.activeAccountHasMnemonicVault,
-      res.data.activeAccountMnemonicSignerLoaded
-    )
-    return { accounts: res.data.accounts, needsMnemonicUnlock: locked }
-  }
-
-  const syncMultisigAccounts = useCallback(async () => {
-    try {
-      const res = await apiSyncLocalMultisigAccounts()
-      if (res.created.length > 0 || res.updated) await refreshAccounts()
-    } catch {
-      // best-effort
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!accountsHydrated) return
-    void syncMultisigAccounts()
-  }, [accountsHydrated, route, syncMultisigAccounts])
-
-  useEffect(() => {
-    portfolioHydratedRef.current = false
-    setPortfolioHydrated(false)
-    setPortfolioRows([])
-    setTotalBalanceUsd(null)
-    setHistorySections([])
-    setPortfolioError(null)
-    setHistoryError(null)
-    // Do not clear portfolioLoading/historyLoading here — in-flight fetches still
-    // own those flags and will clear them in finally.
-  }, [activeAccountId])
-
-  // Network switch: drop stale history rows. Skip the initial mount so we don't
-  // race GET_ACTIVE_NETWORK and leave hydrated=false with no refetch started.
-  const prevNetworkForHistoryRef = useRef<'testnet' | 'mainnet' | null>(null)
-  useEffect(() => {
-    const prev = prevNetworkForHistoryRef.current
-    prevNetworkForHistoryRef.current = activeNetwork
-    if (prev === null || prev === activeNetwork) return
-    setHistorySections([])
-    setHistoryError(null)
-  }, [activeNetwork])
-
-  const loadHistory = useCallback(
-    async (opts?: { force?: boolean }) => {
-      const acc = accounts.find((a) => a.id === activeAccountId) ?? accounts[0]
-      if (!acc?.id) {
-        setHistorySections([])
-        setHistoryLoading(false)
-        return
-      }
-      setHistoryLoading(true)
-      setHistoryError(null)
-      try {
-        const res = await sendToBackground<
-          GetSmartAccountTransactionsRequest,
-          GetSmartAccountTransactionsResponse
-        >({
-          type: 'GET_SMART_ACCOUNT_TRANSACTIONS',
-          payload: { accountId: acc.id, force: opts?.force === true },
-        })
-        if (!res.ok) {
-          setHistoryError(res.error?.message ?? 'Could not load transactions')
-          setHistorySections([])
-          return
-        }
-        const items = (res.data?.items ?? []).map((row) =>
-          mapTransactionToHistoryItem(row, iconUrlForCode(portfolioRowsRef.current, row.assetCode))
-        )
-        setHistorySections(groupHistoryItems(items))
-      } finally {
-        setHistoryLoading(false)
-      }
-    },
-    [accounts, activeAccountId]
-  )
-
-  const loadPortfolio = useCallback(async () => {
-    const acc = accounts.find((a) => a.id === activeAccountId) ?? accounts[0]
-    if (!acc?.id || !acc.smartAccountAddress?.trim()) {
-      setPortfolioRows([])
-      setPortfolioError(null)
-      portfolioHydratedRef.current = true
-      setPortfolioHydrated(true)
-      return
-    }
-    const showLoading = !portfolioHydratedRef.current
-    if (showLoading) setPortfolioLoading(true)
-    setPortfolioError(null)
-    try {
-      const res = await sendToBackground<
-        GetSmartAccountBalancesRequest,
-        GetSmartAccountBalancesResponse
-      >({
-        type: 'GET_SMART_ACCOUNT_BALANCES',
-        payload: { accountId: acc.id },
-      })
-      if (!res.ok) {
-        setPortfolioError(res.error?.message ?? 'Could not load balances')
-        setPortfolioRows([])
-        return
-      }
-      setPortfolioRows(res.data?.rows ?? [])
-      setTotalBalanceUsd(res.data?.totalBalanceUsd ?? null)
-    } finally {
-      setPortfolioLoading(false)
-      portfolioHydratedRef.current = true
-      setPortfolioHydrated(true)
-    }
-  }, [accounts, activeAccountId])
-
-  useEffect(() => {
-    if (page !== 'main' && page !== 'settings') return
-    if (route !== 'home') return
-    if (needsMnemonicUnlock) return
-
-    // Avoid relying on `setupState` for this: on cold start we can render the Home route
-    // before `setupState` finishes hydrating, which would prevent balances from fetching.
-    const acc = accounts.find((a) => a.id === activeAccountId) ?? accounts[0]
-    if (!acc?.smartAccountAddress?.trim()) {
-      // Network switch / empty bucket: don't leave HomeLoadingOverlay stuck on "Loading..."
-      portfolioHydratedRef.current = true
-      setPortfolioHydrated(true)
-      setPortfolioLoading(false)
-      setPortfolioRows([])
-      setTotalBalanceUsd(null)
-      setPortfolioError(null)
-      return
-    }
-
-    void loadPortfolio()
-  }, [page, route, needsMnemonicUnlock, accounts, activeAccountId, loadPortfolio])
-
-  const portfolioRetryAttemptRef = useRef(0)
-  useEffect(() => {
-    if (route !== 'home' || (page !== 'main' && page !== 'settings')) {
-      portfolioRetryAttemptRef.current = 0
-      return
-    }
-    if (!portfolioError) {
-      portfolioRetryAttemptRef.current = 0
-      return
-    }
-    const attempt = Math.min(portfolioRetryAttemptRef.current, 5)
-    const backoffMs = [750, 1500, 3000, 5000, 8000, 12000][attempt] ?? 12000
-    portfolioRetryAttemptRef.current = attempt + 1
-    const t = setTimeout(() => {
-      void loadPortfolio()
-    }, backoffMs)
-    return () => clearTimeout(t)
-  }, [route, setupState, page, portfolioError, loadPortfolio])
-
-  useEffect(() => {
-    if (!accountsHydrated || !accountsLoadSucceeded) return
-    if (route !== 'history' && route !== 'home') return
-    void loadHistory()
-  }, [route, loadHistory, activeNetwork, accountsHydrated, accountsLoadSucceeded])
 
   const loadMultisigProposals = useCallback(async () => {
     if (!activeAccount?.smartAccountAddress || activeAccount.mode !== 'multisig') {
@@ -1092,33 +183,13 @@ export function LatchRoot({ surface }: { surface: Surface }) {
 
   const hasPendingMultisigProposals = multisigPendingCount > 0
 
-  function resetSwapFlow() {
-    setSwapDraft(null)
-    setSwapQuote(null)
-    setSwapBusy(false)
-    setSwapStep('confirm')
-    setSwapFailureDetail(null)
-  }
-
   function openSwapFromNav() {
     if (activeAccount?.mode === 'multisig') return
-    const payId = swapPayTokenCatalogWithIcons[0]?.id ?? 'native'
-    const receiveId = pickDefaultReceiveTokenId(
-      payId,
-      swapReceiveTokenCatalogWithIcons,
-      swapPreferredReceiveTokenIds
-    )
-    setSwapDraft({
-      payTokenId: payId,
-      receiveTokenId: receiveId,
-      payAmount: '',
-      useExchangeBalance: false,
-      approved: false,
-    })
-    setSwapQuote(null)
-    setSwapStep('confirm')
-    setRoute('swap')
-    void loadSwapCatalog()
+    openSwapRef.current()
+  }
+
+  function openSendFlow() {
+    openSendRef.current()
   }
 
   function handleMainTabSelect(tab: MainTab) {
@@ -1126,630 +197,6 @@ export function LatchRoot({ surface }: { surface: Surface }) {
     else if (tab === 'swap') openSwapFromNav()
     else if (tab === 'history') setRoute('history')
     else if (tab === 'explore') setRoute('explore')
-  }
-
-  async function loadPendingDapp() {
-    const res = await sendToBackground<unknown, ListPendingDappRequestsResponse>({
-      type: 'LIST_PENDING_DAPP_REQUESTS',
-      payload: {},
-    })
-    if (!res.ok || !res.data) return
-    setPendingDappRequests(res.data.requests)
-    if (res.data.requests.length > 0) {
-      const netRes = await sendToBackground<undefined, { network: 'testnet' | 'mainnet' }>({
-        type: 'GET_ACTIVE_NETWORK',
-        payload: undefined,
-      })
-      if (netRes.ok && netRes.data?.network) setDappNetwork(netRes.data.network)
-      setRoute('dappApproval')
-      return
-    }
-    setDappBusy(false)
-    setDappProgressLabel(null)
-    setDappError(null)
-    setRoute((prev) => (prev === 'dappApproval' ? 'home' : prev))
-  }
-
-  async function connectFreighter() {
-    setError(null)
-    setLoading('Connecting to Freighter…')
-    try {
-      const ok = await isConnected()
-      if (!ok) throw new Error('Freighter not detected. Please install the Freighter extension.')
-
-      const allowed = await isAllowed()
-      if (!allowed) await setAllowed()
-
-      const g = (await getAddress()) as unknown
-      const gAddress = readAddressFromFreighterGetAddressResult(g)
-      if (!gAddress) throw new Error('Failed to read Freighter address.')
-      const res = await sendToBackground<
-        CreateOrConnectFreighterRequest,
-        CreateOrConnectFreighterResponse & { account: StoredAccount }
-      >({
-        type: 'CREATE_OR_CONNECT_FREIGHTER',
-        payload: { gAddress },
-      })
-      if (!res.ok) throw new Error(friendlyError(res.error))
-      await persistSetupHasAccount(res.data!.smartAccountAddress)
-      await refreshAccounts()
-      setRoute('home')
-    } finally {
-      setLoading(null)
-    }
-  }
-
-  async function connectPhantom() {
-    setError(null)
-    setLoading('Connecting to Phantom…')
-    try {
-      const provider = (window as unknown as { phantom?: { solana?: PhantomSolanaProvider } })
-        .phantom?.solana
-      if (!provider) throw new Error('Phantom not detected. Please install Phantom.')
-
-      const conn = await provider.connect()
-      const base58Pk = conn?.publicKey?.toBase58?.() ?? provider.publicKey?.toBase58?.()
-      if (!base58Pk) throw new Error('Failed to read Phantom public key.')
-      const pkBytes = bs58.decode(base58Pk)
-      const publicKeyHex = bytesToHex(pkBytes)
-
-      const res = await sendToBackground<
-        CreateOrConnectPhantomRequest,
-        CreateOrConnectPhantomResponse & { account: StoredAccount }
-      >({
-        type: 'CREATE_OR_CONNECT_PHANTOM',
-        payload: { publicKeyHex },
-      })
-      if (!res.ok) throw new Error(friendlyError(res.error))
-      await persistSetupHasAccount(res.data!.smartAccountAddress)
-      await refreshAccounts()
-      setRoute('home')
-    } finally {
-      setLoading(null)
-    }
-  }
-
-  async function beginMnemonicImport() {
-    setError(null)
-    setLoading('Importing wallet…')
-    try {
-      const req: ImportMnemonicAccountRequest = {
-        mnemonic: pendingMnemonic,
-        bip39Passphrase: seedExtensionPassphrase || undefined,
-        remember: true,
-        encryptionPassword: seedEncryptionPassword,
-      }
-      const res = await sendToBackground<
-        ImportMnemonicAccountRequest,
-        ImportMnemonicAccountResponse
-      >({
-        type: 'IMPORT_MNEMONIC_ACCOUNT',
-        payload: req,
-      })
-      if (!res.ok) throw new Error(friendlyError(res.error))
-      await persistSetupHasAccount(res.data!.smartAccountAddress)
-      await refreshAccounts()
-      seedWords.reset()
-      setPendingMnemonic('')
-      setSeedExtensionPassphrase('')
-      setSeedEncryptionPassword('')
-      setSeedEncryptionConfirm('')
-      setImportSeedStep('phrase')
-      setRoute('home')
-    } finally {
-      setLoading(null)
-    }
-  }
-
-  async function unlockMnemonicVault() {
-    if (!activeAccount?.id) throw new Error('No active account')
-    setError(null)
-    setLoading('Unlocking…')
-    try {
-      const res = await sendToBackground<UnlockMnemonicVaultRequest, undefined>({
-        type: 'UNLOCK_MNEMONIC_VAULT',
-        payload: { accountId: activeAccount.id, encryptionPassword: unlockVaultPassword },
-      })
-      if (!res.ok) throw new Error(friendlyError(res.error))
-      setUnlockVaultPassword('')
-      await refreshAccounts()
-      const dest = unlockReturnRoute ?? 'home'
-      setUnlockReturnRoute(null)
-      setRoute(resolveMainRoute({ needsMnemonicUnlock: false, preferred: dest }))
-    } finally {
-      setLoading(null)
-    }
-  }
-
-  async function beginPasskeyRegistration() {
-    setError(null)
-    setLoading('Creating passkey…')
-    try {
-      const pre = passkeyPrefetchRef.current
-      if (!pre || pre.kind !== 'registration') {
-        throw new Error(
-          passkeyPrefetchError ??
-            (passkeyPrefetchReady
-              ? 'Passkey session is stale. Use Go Back, then return to Create Passkey.'
-              : 'Still preparing passkey…')
-        )
-      }
-      const optionsJSON = pre.optionsJSON
-      assertBeginOptionsRpIdMatchesExtension(optionsJSON)
-      const reg = (await webauthnCredential('registration', optionsJSON)) as Awaited<
-        ReturnType<typeof startRegistration>
-      >
-      assertRegistrationCeremonyForFinish(reg)
-      const res = await sendToBackground<
-        { response: unknown },
-        BackendWebauthnRegistrationFinishResponse & { account: StoredAccount }
-      >({
-        type: 'PASSKEY_REG_FINISH',
-        payload: { response: reg },
-      })
-      if (!res.ok) {
-        const errMsg = friendlyError(res.error)
-        throw new Error(
-          await enrichWebauthnRpIdHashErrorMessage(errMsg, { optionsJSON, credentialResponse: reg })
-        )
-      }
-      await persistSetupHasAccount(res.data!.smartAccountAddress)
-      await refreshAccounts()
-      setRoute('passkeyCreated')
-    } catch (e) {
-      setPasskeyPrefetchNonce((n) => n + 1)
-      throw e
-    } finally {
-      setLoading(null)
-    }
-  }
-
-  async function loginWithExistingPasskey() {
-    setError(null)
-    setLoading('Logging in with passkey…')
-    try {
-      const pre = passkeyPrefetchRef.current
-      if (!pre || pre.kind !== 'authentication') {
-        throw new Error(
-          passkeyPrefetchError ??
-            (passkeyPrefetchReady
-              ? 'Passkey session is stale. Use Go Back, then try again.'
-              : 'Still preparing passkey…')
-        )
-      }
-      const optionsJSON = pre.optionsJSON
-      assertBeginOptionsRpIdMatchesExtension(optionsJSON)
-      const assertion = (await webauthnCredential('authentication', optionsJSON)) as Awaited<
-        ReturnType<typeof startAuthentication>
-      >
-      const finish = await sendToBackground<
-        { response: unknown },
-        BackendWebauthnAuthenticationFinishResponse
-      >({
-        type: 'PASSKEY_AUTH_FINISH',
-        payload: { response: assertion },
-      })
-      if (!finish.ok) {
-        const errMsg = friendlyError(finish.error)
-        throw new Error(
-          await enrichWebauthnRpIdHashErrorMessage(errMsg, {
-            optionsJSON,
-            credentialResponse: assertion,
-          })
-        )
-      }
-
-      await persistSetupHasAccount(finish.data!.smartAccountAddress)
-      await refreshAccounts()
-      setChooseSignerForExistingWallet(false)
-      setRoute('home')
-    } catch (e) {
-      setPasskeyPrefetchNonce((n) => n + 1)
-      throw e
-    } finally {
-      setLoading(null)
-    }
-  }
-
-  function resetSendFlow() {
-    setSendDraft(INITIAL_SEND_DRAFT)
-    setSendStep('selectToken')
-    setSendResult(null)
-    setSendError(null)
-    setSendProgressLabel(null)
-    setSendTokenPriceUsd(null)
-  }
-
-  function openSendFlow() {
-    resetSendFlow()
-    setRoute('send')
-    void loadPortfolio()
-  }
-
-  const loadMarketPriceForToken = useCallback(async (code: string): Promise<number | null> => {
-    const res = await sendToBackground<GetMarketPricesRequest, GetMarketPricesResponse>({
-      type: 'GET_MARKET_PRICES',
-      payload: { tokens: [code] },
-    })
-    if (!res.ok || !res.data) return null
-    return res.data.pricesByCodeUpper[code.toUpperCase()]?.priceUsd ?? null
-  }, [])
-
-  useEffect(() => {
-    if (route !== 'send') return
-    const code = sendDraft.token?.code?.trim()
-    if (!code) {
-      setSendTokenPriceUsd(null)
-      return
-    }
-    let cancelled = false
-    void loadMarketPriceForToken(code).then((p) => {
-      if (!cancelled) setSendTokenPriceUsd(p)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [route, sendDraft.token?.code, loadMarketPriceForToken])
-
-  async function refreshSwapQuoteForConfirm(): Promise<SwapQuoteVm> {
-    if (!activeAccount?.id || !swapDraft || !swapQuote) {
-      throw new Error('Swap session expired')
-    }
-    const payToken = resolveSwapToken(swapDraft.payTokenId)
-    const receiveToken = resolveSwapToken(swapDraft.receiveTokenId)
-    if (!payToken || !receiveToken) throw new Error('Unknown swap token')
-
-    const res = await sendToBackground<GetSwapQuoteRequest, GetSwapQuoteResponse>({
-      type: 'GET_SWAP_QUOTE',
-      payload: {
-        accountId: activeAccount.id,
-        assetInId: payToken.id,
-        assetOutId: receiveToken.id,
-        amountIn: swapDraft.payAmount,
-        slippageBps: swapQuote.quotePayload.slippageBps,
-        providerId: swapQuote.quotePayload.providerId,
-      },
-    })
-    if (!res.ok || !res.data) throw new Error(friendlyError(res.error))
-
-    const payUsd = swapTokenPriceUsdBySymbol[payToken.symbol.toUpperCase()]
-    const receiveUsd = swapTokenPriceUsdBySymbol[receiveToken.symbol.toUpperCase()]
-    const refreshed = swapQuotePayloadToVm(res.data.quote, payUsd, receiveUsd)
-    setSwapQuote(refreshed)
-    return refreshed
-  }
-
-  async function executeSwapWithSetupLoop(quoteForTx: SwapQuoteVm): Promise<PrepareSwapTxResponse> {
-    if (!activeAccount?.id) throw new Error('No active account')
-
-    const isSoroswap = quoteForTx.quotePayload.providerId === 'soroswap'
-
-    async function runSwapRuleSetup(): Promise<void> {
-      const setupPayload = await buildSetupSwapRequestFromQuote(
-        quoteForTx.quotePayload,
-        activeAccount!
-      )
-      if (!setupPayload) {
-        throw new Error(
-          (await swapSetupPrerequisiteError(activeAccount!, quoteForTx.quotePayload)) ??
-            passkeySetupPrerequisiteError(activeAccount!) ??
-            'Invalid swap setup details'
-        )
-      }
-
-      // Match ensureSendRulesConfigured: keep calling until alreadyConfigured or remaining=0.
-      for (let setupAttempt = 0; setupAttempt < 5; setupAttempt++) {
-        const setupRes = await sendToBackground<SetupSwapRulesRequest, SetupSwapRulesResponse>({
-          type: 'SETUP_SWAP_RULES',
-          payload: setupPayload,
-        })
-        if (!setupRes.ok) {
-          const code = setupRes.error?.code
-          if (code === 'signer_already_exists') {
-            return
-          }
-          throw new Error(friendlyError(setupRes.error))
-        }
-        const setup = setupRes.data!
-        if (setup.alreadyConfigured) {
-          return
-        }
-        await signAndSubmitBuiltTx({
-          build: setup,
-          activeAccount,
-          surface,
-        })
-        if ((setup.remainingSetupCount ?? 0) <= 0) {
-          return
-        }
-      }
-      throw new Error('Swap setup did not complete')
-    }
-
-    // prepare-sign-integration-guide: setup-swap-rules must run before the first
-    // prepare-sign for that signer/network. Soroswap prepare-sign returns a generic
-    // internal_error (not NO_CONTEXT_RULE) when rules are missing — so ensure setup first.
-    if (isSoroswap) {
-      await runSwapRuleSetup()
-    }
-
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const prepareRes = await sendToBackground<PrepareSwapTxRequest, PrepareSwapTxResponse>({
-        type: 'PREPARE_SWAP_TX',
-        payload: {
-          accountId: activeAccount.id,
-          quote: quoteForTx.quotePayload,
-        },
-      })
-
-      if (prepareRes.ok && prepareRes.data) {
-        if (swapBuildNeedsSignerReconfigure(prepareRes.data, activeAccount)) {
-          await runSwapRuleSetup()
-          continue
-        }
-        return prepareRes.data
-      }
-
-      if (isNoContextRuleError(prepareRes.error) || isSwapRuleReconfigureError(prepareRes.error)) {
-        await runSwapRuleSetup()
-        continue
-      }
-
-      // Soroswap / prepare-sign: missing swap rules can surface as opaque 400 internal_error.
-      // Retry setup + prepare a few times (setup tx may still be landing).
-      if (isSoroswap && isPrepareSignMissingSetupError(prepareRes.error) && attempt < 4) {
-        await runSwapRuleSetup()
-        continue
-      }
-
-      throw new Error(friendlyError(prepareRes.error))
-    }
-
-    throw new Error('Swap setup did not complete')
-  }
-
-  async function handleConfirmSwap() {
-    if (!activeAccount?.id || !swapQuote) return
-    setSwapBusy(true)
-    setSwapFailureDetail(null)
-    try {
-      const quoteForTx =
-        swapQuote.quotePayload.providerId === 'soroswap' ||
-        Date.now() >= swapQuote.quotePayload.expiresAtMs - 5_000
-          ? await refreshSwapQuoteForConfirm()
-          : swapQuote
-
-      const prepared = await executeSwapWithSetupLoop(quoteForTx)
-      if (prepared.estimatedFeeXlm || prepared.feeLabel) {
-        setSwapQuote((prev) =>
-          prev
-            ? {
-                ...prev,
-                networkFeeLine: prepared.feeLabel
-                  ? prepared.feeLabel
-                  : `~ ${prepared.estimatedFeeXlm} Stellar`,
-              }
-            : prev
-        )
-      }
-
-      const submitData = await signAndSubmitBuiltTx({
-        build: prepared,
-        activeAccount,
-        surface,
-      })
-      const txHash = extractTransactionHash(submitData)
-      setSwapStep('success')
-      const assetOut = quoteForTx.quotePayload.assetOut
-      void sendToBackground<RecordKnownSacProbeRequest, undefined>({
-        type: 'RECORD_KNOWN_SAC_PROBE',
-        payload: {
-          accountId: activeAccount.id,
-          probe: {
-            code: assetOut.symbol,
-            issuer: assetOut.issuer,
-            sacContractId: assetOut.contractId,
-          },
-        },
-      })
-      void loadPortfolio()
-      if (txHash) console.info('[latch:swap] submitted', txHash)
-    } catch (e) {
-      console.error('[latch:swap]', e)
-      setSwapFailureDetail(e instanceof Error ? e.message : String(e))
-      setSwapStep('failure')
-    } finally {
-      setSwapBusy(false)
-    }
-  }
-
-  async function executeSendWithSetupLoop(draft: SendDraft): Promise<SendResult> {
-    if (!activeAccount) throw new Error('No active account')
-    const account = activeAccount
-
-    // Do NOT call /api/smart-account/webauthn here. With a network-specific factory,
-    // create-or-connect returns a *new* C-address and aborts before passkey signing,
-    // while build-send already works for the funded account the user is sending from.
-    const buildBody = buildSendRequestFromDraft(draft, account, sendTokenPriceUsd, activeNetwork)
-    if (!buildBody) {
-      throw new Error(
-        explainSendDraftNotBuildable(draft, account, sendTokenPriceUsd) ?? 'Invalid send details'
-      )
-    }
-
-    let configuredSendRulesInLoop = false
-    for (let attempt = 0; attempt < 5; attempt++) {
-      setSendProgressLabel('Building…')
-      const buildRes = await sendToBackground<BuildSendTxRequest, BuildSendTxResponse>({
-        type: 'BUILD_SEND_TX',
-        payload: buildBody,
-      })
-
-      if (buildRes.ok && buildRes.data) {
-        const submitData = await signAndSubmitBuiltTx({
-          build: buildRes.data,
-          activeAccount: account,
-          surface,
-          onProgress: setSendProgressLabel,
-        })
-        return {
-          status: 'success',
-          hash: extractTransactionHash(submitData),
-          submittedAt: new Date().toISOString(),
-        }
-      }
-
-      // Missing CallContract send rules: API may return 409 NO_CONTEXT_RULE or opaque
-      // 400 internal_error ("failed to build transaction") — same as prepare-sign.
-      if (isBuildSendMissingSetupError(buildRes.error)) {
-        const setupBody = buildSetupRequestFromDraft(draft, account, undefined, activeNetwork)
-        if (!setupBody) {
-          throw new Error(
-            passkeySetupPrerequisiteError(account) ??
-              'Cannot set up send rules for this account. Sign in with your passkey again.'
-          )
-        }
-        const setupResult = await ensureSendRulesConfigured({
-          setupBody,
-          signAndSubmit: (build) =>
-            signAndSubmitBuiltTx({
-              build,
-              activeAccount: account,
-              surface,
-              onProgress: setSendProgressLabel,
-            }),
-          onProgress: setSendProgressLabel,
-        })
-        if (setupResult === 'configured') configuredSendRulesInLoop = true
-        // Opaque build failure with rules already present is usually simulation (balance,
-        // etc.), not missing setup — unless we just configured and the rule may still be landing.
-        if (
-          setupResult === 'already_configured' &&
-          !configuredSendRulesInLoop &&
-          !isNoContextRuleError(buildRes.error)
-        ) {
-          throw new Error(friendlyError(buildRes.error))
-        }
-        continue
-      }
-
-      throw new Error(friendlyError(buildRes.error))
-    }
-
-    throw new Error('Send setup did not complete')
-  }
-
-  const fetchSendFeeEstimate = useCallback(async (): Promise<BuildSendTxResponse | null> => {
-    if (!activeAccount || activeAccount.mode === 'multisig') return null
-    const buildBody = buildSendRequestFromDraft(
-      sendDraft,
-      activeAccount,
-      sendTokenPriceUsd,
-      activeNetwork
-    )
-    if (!buildBody) return null
-    try {
-      const buildRes = await sendToBackground<BuildSendTxRequest, BuildSendTxResponse>({
-        type: 'BUILD_SEND_TX',
-        payload: buildBody,
-      })
-      if (buildRes.ok && buildRes.data) return buildRes.data
-      return null
-    } catch {
-      return null
-    }
-  }, [activeAccount, sendDraft, sendTokenPriceUsd, activeNetwork])
-
-  async function handleSubmitSend() {
-    setSendError(null)
-    setSendProgressLabel('Building…')
-    try {
-      if (activeAccount?.mode === 'multisig') {
-        const proposal = await createMultisigSendProposalWithSetup({
-          draft: sendDraft,
-          multisigAccount: activeAccount,
-          accounts,
-          priceUsd: sendTokenPriceUsd,
-          surface,
-          onProgress: setSendProgressLabel,
-        })
-        setSendResult({
-          status: 'success',
-          proposalId: proposal.id,
-          submittedAt: new Date().toISOString(),
-        })
-        setMultisigDetailProposalId(proposal.id)
-        setSendStep('success')
-        void loadPortfolio()
-        void loadMultisigProposals()
-        return
-      }
-
-      const result = await executeSendWithSetupLoop(sendDraft)
-      setSendResult(result)
-      setSendStep('success')
-      if (result.status === 'success') {
-        void saveToAddressBook({
-          address: sendDraft.recipientAddress,
-          name: sendDraft.recipientName,
-        }).catch(() => {})
-      }
-      void loadPortfolio()
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
-      console.error('[latch:send]', message, e)
-      const errorMessage = await enrichSendFailureDetail({
-        errorMessage: message,
-        draft: sendDraft,
-        network: activeNetwork,
-      })
-      setSendResult({
-        status: 'failure',
-        errorMessage,
-        submittedAt: new Date().toISOString(),
-      })
-      setSendStep('failure')
-    } finally {
-      setSendProgressLabel(null)
-    }
-  }
-
-  async function resolvePendingDapp(
-    req: PendingDappRequest,
-    approved: boolean,
-    extra?: {
-      signedXdr?: string
-      txHash?: string
-      signedAuthEntry?: string
-      signedTxXdr?: string
-      errorMessage?: string
-      errorCode?: string
-    }
-  ) {
-    await sendToBackground({
-      type: 'RESOLVE_PENDING_DAPP_REQUEST',
-      payload: {
-        requestId: req.id,
-        approved,
-        errorMessage: extra?.errorMessage,
-        errorCode: extra?.errorCode,
-        signedXdr: extra?.signedXdr,
-        txHash: extra?.txHash,
-        signedAuthEntry: extra?.signedAuthEntry,
-        signedTxXdr: extra?.signedTxXdr,
-      },
-    })
-    setDappBusy(false)
-    setDappProgressLabel(null)
-    setDappError(null)
-    await loadPendingDapp()
-    if (pendingDappRequests.length <= 1) {
-      setRoute(accounts.length > 0 ? 'home' : 'home')
-      if (accounts.length === 0) {
-        onboardingTabOpenedRef.current = false
-        void openOnboardingTab().catch(() => {})
-      }
-    }
   }
 
   const showOnboardingTabPrompt =
@@ -1769,7 +216,7 @@ export function LatchRoot({ surface }: { surface: Surface }) {
       })
       if (!res.ok) throw new Error(friendlyError(res.error))
       const refreshed = await refreshAccounts()
-      setPendingDappRequests([])
+      clearDappPendingRef.current()
       setPage('main')
       if ((refreshed?.accounts.length ?? 0) > 0) {
         setRoute(resolveMainRoute({ needsMnemonicUnlock: refreshed?.needsMnemonicUnlock ?? false }))
@@ -1801,9 +248,10 @@ export function LatchRoot({ surface }: { surface: Surface }) {
     (page === 'main' || page === 'settings') &&
     route === 'swap' &&
     !loading &&
-    swapCatalogLoading &&
-    swapPayTokenCatalogWithIcons.length === 0
-  const showSwapLoadingOverlay = swapBusy && route === 'swapConfirm' && swapStep === 'confirm'
+    swapOverlayFlags.catalogLoading &&
+    swapOverlayFlags.payCatalogEmpty
+  const showSwapLoadingOverlay =
+    swapOverlayFlags.swapBusy && route === 'swapConfirm' && swapOverlayFlags.swapStep === 'confirm'
   const routeContentMarginClass = showTopHeader ? 'mt-2' : 'mt-0'
 
   useMultisigJoinTokenOnMount((token) => {
@@ -1811,17 +259,7 @@ export function LatchRoot({ surface }: { surface: Surface }) {
     setRoute('joinMultisig')
   })
 
-  const multisigRoutes: Route[] = [
-    'createMultisig',
-    'addMultisigOwners',
-    'multisigThreshold',
-    'multisigReviewDeploy',
-    'multisigSuccess',
-    'joinMultisig',
-    'multisigProposals',
-    'multisigProposalDetail',
-    'multisigWallets',
-  ]
+  const multisigRoutes = MULTISIG_ROUTES
   const isMultisigRoute = multisigRoutes.includes(route as Route)
 
   const mainTabRoutes = ['home', 'swap', 'history', 'explore'] as const
@@ -1905,158 +343,33 @@ export function LatchRoot({ surface }: { surface: Surface }) {
               </div>
             ) : null}
 
-            {!loading && route === 'dappApproval' ? (
-              <div
-                className={[
-                  routeContentMarginClass,
-                  'flex flex-col animate-screenIn',
-                  flowHeightClass,
-                ].join(' ')}
-              >
-                {pendingDappRequests[0]?.kind === 'externalSignReview' &&
-                pendingDappRequests[0].prepared ? (
-                  <ExternalSignReviewScreen
-                    origin={pendingDappRequests[0].origin}
-                    prepared={pendingDappRequests[0].prepared}
-                    busy={dappBusy}
-                    progressLabel={dappProgressLabel}
-                    error={dappError}
-                    onConfirm={() => {
-                      const req = pendingDappRequests[0]
-                      if (!req?.prepared || !activeAccount) return
-                      void (async () => {
-                        setDappBusy(true)
-                        setDappError(null)
-                        try {
-                          // #region agent log
-                          debugAgentLog({
-                            hypothesisId: 'H3-H5',
-                            location: 'LatchRoot.tsx:dappApprovalConfirm',
-                            message: 'dapp approval confirm account vs request',
-                            data: {
-                              surface,
-                              accountId: activeAccount.id,
-                              accountMode: activeAccount.mode,
-                              activeSmartSuffix: (activeAccount.smartAccountAddress ?? '').slice(
-                                -8
-                              ),
-                              reqSmartSuffix: (req.signRequest?.smartAccountAddress ?? '').slice(
-                                -8
-                              ),
-                              accountsMatch:
-                                activeAccount.smartAccountAddress ===
-                                req.signRequest?.smartAccountAddress,
-                              passkeyCredSuffix: (activeAccount.passkeyCredentialId ?? '').slice(
-                                -12
-                              ),
-                              hasPasskeyCred: Boolean(activeAccount.passkeyCredentialId?.trim()),
-                              hasKeyData: Boolean(activeAccount.passkeyKeyDataHex?.trim()),
-                              submit: req.signRequest?.submit,
-                              origin: req.origin,
-                            },
-                          })
-                          // #endregion
-                          if (req.signRequest?.submit === false) {
-                            const { signedTxXdr, signedAuthEntry } = await signWithoutSubmitBuiltTx(
-                              {
-                                build: req.prepared!,
-                                activeAccount,
-                                surface,
-                                onProgress: setDappProgressLabel,
-                              }
-                            )
-                            await resolvePendingDapp(req, true, {
-                              signedTxXdr,
-                              signedAuthEntry,
-                            })
-                            return
-                          }
-                          const submitData = await signAndSubmitBuiltTx({
-                            build: req.prepared!,
-                            activeAccount,
-                            surface,
-                            onProgress: setDappProgressLabel,
-                          })
-                          const txHash = extractTransactionHash(submitData)
-                          await resolvePendingDapp(req, true, { txHash })
-                        } catch (e) {
-                          const message = e instanceof Error ? e.message : String(e)
-                          // Clear the durable queue on failure so reopening the extension
-                          // does not resurrect a stale "Review transaction" screen.
-                          try {
-                            await resolvePendingDapp(req, false, {
-                              errorMessage: message,
-                              errorCode: 'sign_failed',
-                            })
-                            setError(message)
-                          } catch {
-                            setDappError(message)
-                            setDappBusy(false)
-                            setDappProgressLabel(null)
-                          }
-                        }
-                      })()
-                    }}
-                    onReject={() => {
-                      const req = pendingDappRequests[0]
-                      if (!req) return
-                      void resolvePendingDapp(req, false).catch((e) =>
-                        setDappError(e instanceof Error ? e.message : String(e))
-                      )
-                    }}
-                  />
-                ) : pendingDappRequests[0] ? (
-                  <GrantAccessScreen
-                    origin={pendingDappRequests[0].origin}
-                    kind={pendingDappRequests[0].kind}
-                    network={dappNetwork}
-                    smartAccountAddress={activeAccount?.smartAccountAddress ?? '—'}
-                    busy={dappBusy}
-                    onApprove={() => {
-                      const req = pendingDappRequests[0]
-                      if (!req) return
-                      void resolvePendingDapp(req, true).catch((e) =>
-                        setDappError(e instanceof Error ? e.message : String(e))
-                      )
-                    }}
-                    onReject={() => {
-                      const req = pendingDappRequests[0]
-                      if (!req) return
-                      void resolvePendingDapp(req, false).catch((e) =>
-                        setDappError(e instanceof Error ? e.message : String(e))
-                      )
-                    }}
-                  />
-                ) : null}
-              </div>
-            ) : null}
+            <DappRouteViews
+              route={route}
+              surface={surface}
+              activeAccount={activeAccount}
+              accountsLength={accounts.length}
+              routeContentMarginClass={routeContentMarginClass}
+              flowHeightClass={flowHeightClass}
+              loading={loading}
+              onSetRoute={setRoute}
+              onSetError={setError}
+              onResetOnboardingTabOpened={() => {
+                onboardingTabOpenedRef.current = false
+              }}
+              registerClearPending={(clear) => {
+                clearDappPendingRef.current = clear
+              }}
+            />
 
             {!loading && showOnboardingTabPrompt ? (
-              <div
-                className={[
-                  `${routeContentMarginClass} flex flex-col items-center justify-between h-full pb-6 animate-screenIn`,
-                  flowHeightClass,
-                ].join(' ')}
-              >
-                <div className="flex flex-col items-center text-center">
-                  <img src={logoUrl} alt="Latch" className="mt-4 h-10 w-10 object-contain" />
-                  <h1 className="mt-8 text-2xl font-extrabold tracking-tight">Set up Latch</h1>
-                  <p className="mt-4 max-w-[280px] text-sm text-muted">
-                    Wallet setup runs in a full browser tab. If it didn&apos;t open, use the button
-                    below.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onboardingTabOpenedRef.current = true
-                    void openOnboardingTab().catch(() => {})
-                  }}
-                  className="h-12 w-full rounded-full bg-primary text-base font-extrabold text-black shadow-soft"
-                >
-                  Open setup tab
-                </button>
-              </div>
+              <OpenSetupTabScreen
+                routeContentMarginClass={routeContentMarginClass}
+                flowHeightClass={flowHeightClass}
+                onOpenSetupTab={() => {
+                  onboardingTabOpenedRef.current = true
+                  void openOnboardingTab().catch(() => {})
+                }}
+              />
             ) : null}
 
             {!loading && !showOnboardingTabPrompt && isMultisigRoute ? (
@@ -2089,389 +402,24 @@ export function LatchRoot({ surface }: { surface: Surface }) {
               </div>
             ) : null}
 
-            {!loading && route === 'addAccount' ? (
-              <div
-                className={[
-                  routeContentMarginClass,
-                  'flex flex-col animate-screenIn',
-                  flowHeightClass,
-                ].join(' ')}
-              >
-                <div className="text-center">
-                  <img src={logoUrl} alt="Latch" className="mx-auto h-10 w-10 object-contain" />
-                  <h2 className="mt-4 text-3xl font-extrabold tracking-tight">Add account</h2>
-                  <p className="mt-2 text-sm text-muted">
-                    Choose how you want to add another signer
-                  </p>
-                </div>
-
-                <div className="mt-6 space-y-3 w-full">
-                  <button
-                    onClick={() => {
-                      setChooseSignerForExistingWallet(false)
-                      setRoute('addAccountPasskey')
-                    }}
-                    className="flex w-full items-center justify-between rounded-2xl border border-border bg-surface/60 px-4 py-4 text-left hover:bg-surface/70"
-                  >
-                    <div>
-                      <div className="text-base font-extrabold">Passkey</div>
-                      <div className="mt-1 text-xs text-muted">Log in with an existing passkey</div>
-                    </div>
-                    <ExternalLink className={headerIconClass} strokeWidth={2} aria-hidden />
-                  </button>
-
-                  <button
-                    onClick={() => setRoute('importSeed')}
-                    className="flex w-full items-center justify-between rounded-2xl border border-border bg-surface/60 px-4 py-4 text-left hover:bg-surface/70"
-                  >
-                    <div>
-                      <div className="text-base font-extrabold">Recovery phrase</div>
-                      <div className="mt-1 text-xs text-muted">Add a seed-based account</div>
-                    </div>
-                    <ExternalLink className={headerIconClass} strokeWidth={2} aria-hidden />
-                  </button>
-                </div>
-
-                <div className="mt-auto space-y-3 w-full">
-                  <button
-                    onClick={() => setRoute('home')}
-                    className="h-12 w-full rounded-full border border-border bg-surface text-base font-bold text-fg shadow-soft"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
-            {route === 'addAccountPasskey' ? (
-              <div
-                className={[
-                  routeContentMarginClass,
-                  'flex flex-col animate-screenIn',
-                  flowHeightClass,
-                ].join(' ')}
-              >
-                <div className="text-center">
-                  <img src={logoUrl} alt="Latch" className="mx-auto h-10 w-10 object-contain" />
-                  <h2 className="mt-4 text-3xl font-extrabold tracking-tight">Passkey login</h2>
-                  <p className="mt-2 text-sm text-muted">Use your existing passkey to connect</p>
-                </div>
-
-                {passkeyPrefetchError ? (
-                  <div className="mt-4 rounded-2xl border border-border bg-surface/60 px-3 py-3 text-xs text-muted">
-                    {passkeyPrefetchError}
-                  </div>
-                ) : null}
-
-                <div className="mt-auto space-y-3 w-full">
-                  <button
-                    disabled={Boolean(loading) || !passkeyPrefetchReady}
-                    onClick={() =>
-                      void loginWithExistingPasskey().catch((e) =>
-                        setError(e instanceof Error ? e.message : String(e))
-                      )
-                    }
-                    className="h-12 w-full rounded-full bg-primary text-base font-extrabold text-black shadow-soft disabled:opacity-50"
-                  >
-                    {!passkeyPrefetchReady
-                      ? 'Preparing…'
-                      : loading
-                        ? loading
-                        : 'Continue with Passkey'}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setLoading(null)
-                      setRoute(chooseSignerForExistingWallet ? 'chooseSigner' : 'addAccount')
-                    }}
-                    className="h-12 w-full rounded-full border border-border bg-surface text-base font-bold text-fg shadow-soft"
-                  >
-                    Go Back
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
-            {!loading && route === 'chooseSigner' && !showOnboardingTabPrompt ? (
-              <div
-                className={[
-                  routeContentMarginClass,
-                  'flex flex-col animate-screenIn',
-                  flowHeightClass,
-                ].join(' ')}
-              >
-                <div className="text-center">
-                  <img src={logoUrl} alt="Latch" className="mx-auto h-10 w-10 object-contain" />
-                  <h2 className="mt-4 text-3xl font-extrabold tracking-tight">Choose Signer</h2>
-                  <p className="mt-2 text-sm text-muted">
-                    {chooseSignerForExistingWallet
-                      ? 'Pick how you usually unlock your Latch wallet.'
-                      : 'Select a signer to secure your smart account'}
-                  </p>
-                </div>
-
-                {/* Choose signer screen */}
-                <div className="flex flex-col items-center space-y-3">
-                  <div className="mt-6 space-y-3 w-full">
-                    {(ENABLE_OTHER_SIGNERS
-                      ? ([
-                          {
-                            id: 'freighter',
-                            name: 'Freighter',
-                            subtitle: 'Browser extension wallet for Stellar',
-                          },
-                          {
-                            id: 'phantom',
-                            name: 'Phantom',
-                            subtitle: 'Wallet for message signing',
-                          },
-                          {
-                            id: 'passkey',
-                            name: 'Passkey',
-                            subtitle: 'Biometric WebAuthn signer (P-256)',
-                          },
-                        ] as const)
-                      : ([
-                          {
-                            id: 'passkey',
-                            name: 'Passkey',
-                            subtitle: 'Biometric WebAuthn signer (P-256)',
-                          },
-                        ] as const)
-                    ).map((s) => {
-                      const active = s.id === selectedSigner
-                      return (
-                        <button
-                          key={s.id}
-                          onClick={() => setSelectedSigner(s.id)}
-                          className={[
-                            'flex w-full items-center justify-between rounded-2xl border px-4 py-4 text-left',
-                            'bg-surface/60 hover:bg-surface/70',
-                            active ? 'border-primary' : 'border-border',
-                          ].join(' ')}
-                        >
-                          <div>
-                            <div className="text-base font-extrabold">{s.name}</div>
-                            <div className="mt-1 text-xs text-muted">{s.subtitle}</div>
-                          </div>
-                          <span className="text-fg/70">
-                            <ExternalLink className={headerIconClass} strokeWidth={2} aria-hidden />
-                          </span>
-                        </button>
-                      )
-                    })}
-                  </div>
-
-                  <div className="mt-auto space-y-3 w-full">
-                    {selectedSigner === 'passkey' ? (
-                      <button
-                        onClick={() =>
-                          setRoute(
-                            chooseSignerForExistingWallet ? 'addAccountPasskey' : 'createPasskey'
-                          )
-                        }
-                        className="h-12 w-full rounded-full bg-primary text-base font-extrabold text-black shadow-soft"
-                      >
-                        {chooseSignerForExistingWallet
-                          ? 'Log in with Passkey'
-                          : 'Continue with Passkey'}
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => {
-                          void (
-                            selectedSigner === 'freighter' ? connectFreighter() : connectPhantom()
-                          ).catch((e) => setError(e instanceof Error ? e.message : String(e)))
-                        }}
-                        className="h-12 w-full rounded-full bg-primary text-base font-extrabold text-black shadow-soft"
-                      >
-                        Continue
-                      </button>
-                    )}
-                    <button
-                      onClick={() => {
-                        setChooseSignerForExistingWallet(false)
-                        if (accounts.length > 0) {
-                          setRoute('home')
-                        } else {
-                          void openOnboardingTab()
-                        }
-                      }}
-                      className="h-12 w-full rounded-full border border-border bg-surface text-base font-bold text-fg shadow-soft"
-                    >
-                      Go Back
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-            {route === 'createPasskey' && !showOnboardingTabPrompt ? (
-              <div
-                className={[
-                  routeContentMarginClass,
-                  'flex flex-col animate-screenIn',
-                  flowHeightClass,
-                ].join(' ')}
-              >
-                <div className="text-center">
-                  <img src={logoUrl} alt="Latch" className="mx-auto h-10 w-10 object-contain" />
-                  <h2 className="mt-4 text-3xl font-extrabold tracking-tight">Create Passkey</h2>
-                  <p className="mt-2 text-sm text-muted">Protect your account with biometrics</p>
-                </div>
-
-                <div className="mt-7 grid place-items-center">
-                  <div className="grid h-24 w-24 place-items-center rounded-3xl bg-surface shadow-soft">
-                    <img
-                      src={biometricsUrl}
-                      alt="Biometrics"
-                      className="h-14 w-14 object-contain"
-                    />
-                  </div>
-                </div>
-
-                <div className="mt-7 rounded-2xl bg-surface/70 px-4 py-4 shadow-soft">
-                  <div className="text-base font-extrabold">Biometric Security</div>
-                  <div className="mt-1 text-xs text-muted">
-                    Use your device&apos;s fingerprint or face recognition
-                  </div>
-                </div>
-
-                {passkeyPrefetchError ? (
-                  <div className="mt-4 rounded-2xl border border-border bg-surface/60 px-3 py-3 text-xs text-muted">
-                    {passkeyPrefetchError}
-                  </div>
-                ) : null}
-
-                <div className="mt-auto space-y-3">
-                  <button
-                    disabled={Boolean(loading) || !passkeyPrefetchReady}
-                    onClick={() =>
-                      void beginPasskeyRegistration().catch((e) =>
-                        setError(e instanceof Error ? e.message : String(e))
-                      )
-                    }
-                    className="h-12 w-full rounded-full bg-primary text-base font-extrabold text-black shadow-soft disabled:opacity-50"
-                  >
-                    {!passkeyPrefetchReady ? 'Preparing…' : loading ? loading : 'Create Passkey'}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setLoading(null)
-                      setRoute('chooseSigner')
-                    }}
-                    className="h-12 w-full rounded-full border border-border bg-surface text-base font-bold text-fg shadow-soft"
-                  >
-                    Go Back
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
-            {!loading && route === 'passkeyCreated' ? (
-              <div
-                className={[
-                  `${routeContentMarginClass} flex flex-col items-center animate-screenIn`,
-                  flowHeightClass,
-                ].join(' ')}
-              >
-                <img src={logoUrl} alt="Latch" className="mt-3 h-10 w-10 object-contain" />
-
-                <div className="mt-12 grid place-items-center">
-                  <img
-                    src={successAvatarUrl}
-                    alt=""
-                    className="h-44 w-44 object-contain animate-pop"
-                  />
-                </div>
-
-                <h2 className="mt-8 text-center text-3xl font-extrabold tracking-tight">
-                  Passkey Created!
-                </h2>
-                <p className="mt-3 text-center text-sm text-muted">Your account has been set up.</p>
-
-                <div className="mt-auto w-full">
-                  <button
-                    onClick={() => setRoute('home')}
-                    className="h-12 w-full rounded-full bg-primary text-base font-extrabold text-black shadow-soft"
-                  >
-                    Go to Dashboard
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
-            {!loading &&
-            (route === 'importSeed' || route === 'importSeedEncrypt') &&
-            !showOnboardingTabPrompt ? (
-              <div
-                className={[
-                  `${routeContentMarginClass} flex min-h-0 flex-1 flex-col animate-screenIn`,
-                  flowHeightClass,
-                ].join(' ')}
-              >
-                <ImportSeedScreen
-                  surface={surface}
-                  step={route === 'importSeedEncrypt' ? 'encrypt' : importSeedStep}
-                  words={seedWords.words}
-                  onWordChange={seedWords.setWordAt}
-                  onPasteWords={seedWords.fillFromPaste}
-                  isValidPhrase={seedWords.isValid}
-                  onBack={() => {
-                    if (route === 'importSeedEncrypt') {
-                      setRoute('importSeed')
-                      setImportSeedStep('phrase')
-                    } else if (accounts.length > 0) {
-                      setRoute('home')
-                    } else {
-                      void openOnboardingTab()
-                    }
-                  }}
-                  onProceedToEncrypt={() => {
-                    setPendingMnemonic(seedWords.mnemonic)
-                    setImportSeedStep('encrypt')
-                    setRoute('importSeedEncrypt')
-                  }}
-                  encryptionPassword={seedEncryptionPassword}
-                  encryptionConfirm={seedEncryptionConfirm}
-                  onEncryptionPasswordChange={setSeedEncryptionPassword}
-                  onEncryptionConfirmChange={setSeedEncryptionConfirm}
-                  onImport={() =>
-                    void beginMnemonicImport().catch((e) =>
-                      setError(e instanceof Error ? e.message : String(e))
-                    )
-                  }
-                  onEncryptBack={() => {
-                    setRoute('importSeed')
-                    setImportSeedStep('phrase')
-                  }}
-                  importError={error}
-                  busy={loading != null}
-                />
-              </div>
-            ) : null}
-
-            {!loading && route === 'unlockMnemonic' ? (
-              <div
-                className={[
-                  routeContentMarginClass,
-                  'flex flex-col animate-screenIn',
-                  flowHeightClass,
-                ].join(' ')}
-              >
-                <UnlockMnemonicScreen
-                  password={unlockVaultPassword}
-                  onPasswordChange={setUnlockVaultPassword}
-                  onUnlock={() =>
-                    void unlockMnemonicVault().catch((e) =>
-                      setError(e instanceof Error ? e.message : String(e))
-                    )
-                  }
-                  error={error}
-                  busy={loading != null}
-                />
-              </div>
-            ) : null}
+            <AccountRouteViews
+              route={route}
+              surface={surface}
+              accounts={accounts}
+              activeAccount={activeAccount}
+              showOnboardingTabPrompt={showOnboardingTabPrompt}
+              unlockReturnRoute={unlockReturnRoute}
+              routeContentMarginClass={routeContentMarginClass}
+              flowHeightClass={flowHeightClass}
+              loading={loading}
+              error={error}
+              onSetLoading={setLoading}
+              onSetError={setError}
+              onSetRoute={setRoute}
+              onSetUnlockReturnRoute={setUnlockReturnRoute}
+              onRefreshAccounts={refreshAccounts}
+              onPersistSetupHasAccount={persistSetupHasAccount}
+            />
 
             {!loading && route === 'home' && !needsMnemonicUnlock && !showOnboardingTabPrompt ? (
               <div
@@ -2593,7 +541,6 @@ export function LatchRoot({ surface }: { surface: Surface }) {
                             throw new Error(res.error?.message ?? 'Failed to switch network')
                           }
                           setActiveNetwork(res.data.network)
-                          setDappNetwork(res.data.network)
                           setNetworkLabel(
                             res.data.networkLabel ||
                               (res.data.network === 'mainnet'
@@ -2658,34 +605,17 @@ export function LatchRoot({ surface }: { surface: Surface }) {
             ) : null}
 
             {!loading && route === 'migrationSuccess' ? (
-              <div
-                className={[
-                  `${routeContentMarginClass} flex min-h-0 flex-1 flex-col items-center animate-screenIn`,
-                  flowHeightClass,
-                ].join(' ')}
-              >
-                <img src={successAvatarUrl} alt="" className="h-16 w-16 object-contain" />
-                <h2 className="mt-6 text-center text-2xl font-extrabold tracking-tight">
-                  Migration complete
-                </h2>
-                <p className="mt-3 max-w-[280px] text-center text-sm leading-relaxed text-muted">
-                  Your transactions were submitted to the network. Balances may take a moment to
-                  update on-chain.
-                </p>
-                <button
-                  type="button"
-                  className="mt-8 h-12 w-full max-w-xs rounded-full bg-primary text-base font-extrabold text-black shadow-soft"
-                  onClick={() => {
-                    if (activeAccount?.id) {
-                      void markMigrationHomePromoCompleted(activeAccount.id)
-                    }
-                    void loadPortfolio()
-                    setRoute(resolveMainRoute({ needsMnemonicUnlock, preferred: 'home' }))
-                  }}
-                >
-                  Back to home
-                </button>
-              </div>
+              <MigrationSuccessScreen
+                routeContentMarginClass={routeContentMarginClass}
+                flowHeightClass={flowHeightClass}
+                onBackToHome={() => {
+                  if (activeAccount?.id) {
+                    void markMigrationHomePromoCompleted(activeAccount.id)
+                  }
+                  void loadPortfolio()
+                  setRoute(resolveMainRoute({ needsMnemonicUnlock, preferred: 'home' }))
+                }}
+              />
             ) : null}
 
             {!loading && route === 'history' ? (
@@ -2728,148 +658,43 @@ export function LatchRoot({ surface }: { surface: Surface }) {
               </div>
             ) : null}
 
-            {!loading && route === 'swap' ? (
-              <div
-                className={[
-                  routeContentMarginClass,
-                  'flex min-h-0 flex-1 flex-col animate-screenIn',
-                  flowHeightClass,
-                ].join(' ')}
-              >
-                {!(swapCatalogLoading && swapPayTokenCatalogWithIcons.length === 0) ? (
-                  <SwapScreen
-                    surface={surface}
-                    accountId={activeAccount?.id ?? ''}
-                    walletLabel={swapWalletLabel(activeAccount?.smartAccountAddress)}
-                    initialState={swapDraft ?? undefined}
-                    payTokenCatalog={swapPayTokenCatalogWithIcons}
-                    receiveTokenCatalog={swapReceiveTokenCatalogWithIcons}
-                    preferredReceiveTokenIds={swapPreferredReceiveTokenIds}
-                    tokenPriceUsdBySymbol={swapTokenPriceUsdBySymbol}
-                    onBack={() => setRoute('home')}
-                    onContinue={(q, d) => {
-                      setSwapDraft(d)
-                      setSwapQuote(q)
-                      setSwapStep('confirm')
-                      setRoute('swapConfirm')
-                    }}
-                  />
-                ) : null}
-              </div>
-            ) : null}
+            <SwapRouteViews
+              route={route}
+              surface={surface}
+              activeAccount={activeAccount}
+              setupState={setupState}
+              routeContentMarginClass={routeContentMarginClass}
+              flowHeightClass={flowHeightClass}
+              loading={loading}
+              onSetRoute={setRoute}
+              onLoadPortfolio={() => void loadPortfolio()}
+              onOverlayFlags={setSwapOverlayFlags}
+              registerOpenSwap={(open) => {
+                openSwapRef.current = open
+              }}
+            />
 
-            {!loading && route === 'swapConfirm' ? (
-              <div
-                className={[
-                  routeContentMarginClass,
-                  'flex min-h-0 flex-1 flex-col animate-screenIn',
-                  flowHeightClass,
-                ].join(' ')}
-              >
-                {swapDraft && swapQuote ? (
-                  swapStep === 'success' ? (
-                    <SwapSuccessScreen
-                      draft={swapDraft}
-                      quote={swapQuote}
-                      resolveSwapToken={resolveSwapToken}
-                      onBackToHome={() => {
-                        resetSwapFlow()
-                        setRoute('home')
-                      }}
-                    />
-                  ) : swapStep === 'failure' ? (
-                    <SwapFailureScreen
-                      draft={swapDraft}
-                      quote={swapQuote}
-                      resolveSwapToken={resolveSwapToken}
-                      errorDetail={swapFailureDetail}
-                      onBack={() => {
-                        resetSwapFlow()
-                        setRoute('swap')
-                      }}
-                      onTryAgain={() => {
-                        setSwapFailureDetail(null)
-                        setSwapStep('confirm')
-                      }}
-                    />
-                  ) : (
-                    <ConfirmSwapScreen
-                      surface={surface}
-                      draft={swapDraft}
-                      quote={swapQuote}
-                      resolveSwapToken={resolveSwapToken}
-                      receiveAddress={activeAccount?.smartAccountAddress}
-                      busy={swapBusy}
-                      onBackOrCancel={() => {
-                        if (swapBusy) return
-                        setRoute('swap')
-                      }}
-                      onConfirm={() => {
-                        void handleConfirmSwap()
-                      }}
-                    />
-                  )
-                ) : (
-                  <div className="rounded-2xl border border-border bg-surface/60 p-4 text-sm shadow-soft">
-                    <div className="font-extrabold">Swap session expired</div>
-                    <div className="mt-2 text-muted">Start a new swap from the dashboard.</div>
-                    <button
-                      className="mt-4 h-10 w-full rounded-full bg-primary text-sm font-extrabold text-black"
-                      onClick={() => setRoute('home')}
-                    >
-                      Back to Home
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : null}
-
-            {!loading && route === 'send' ? (
-              <div
-                className={[
-                  `${routeContentMarginClass} flex min-h-0 flex-1 flex-col animate-screenIn`,
-                  flowHeightClass,
-                ].join(' ')}
-              >
-                <SendFlow
-                  surface={surface}
-                  step={sendStep}
-                  draft={sendDraft}
-                  result={sendResult}
-                  portfolioRows={portfolioRows}
-                  portfolioLoading={portfolioLoading}
-                  portfolioError={portfolioError}
-                  tokenPriceUsd={sendTokenPriceUsd}
-                  networkLabel={networkLabel}
-                  network={activeNetwork}
-                  sendProgressLabel={sendProgressLabel}
-                  sendError={sendError}
-                  createProposalMode={activeAccount?.mode === 'multisig'}
-                  onDraftChange={(patch) => setSendDraft((d) => ({ ...d, ...patch }))}
-                  onStepChange={setSendStep}
-                  onBackFromSend={() => {
-                    resetSendFlow()
-                    setRoute('home')
-                  }}
-                  onFetchFeeEstimate={fetchSendFeeEstimate}
-                  onSubmitSend={() => void handleSubmitSend()}
-                  onContinueHome={() => {
-                    if (sendResult?.proposalId && activeAccount?.mode === 'multisig') {
-                      setMultisigDetailProposalId(sendResult.proposalId)
-                      resetSendFlow()
-                      setRoute('multisigProposalDetail')
-                      return
-                    }
-                    resetSendFlow()
-                    setRoute('home')
-                  }}
-                  onTryAgainFromFailure={() => {
-                    setSendError(sendResult?.errorMessage ?? null)
-                    setSendStep('summary')
-                  }}
-                />
-              </div>
-            ) : null}
+            <SendRouteViews
+              route={route}
+              surface={surface}
+              activeAccount={activeAccount}
+              accounts={accounts}
+              activeNetwork={activeNetwork}
+              networkLabel={networkLabel}
+              portfolioRows={portfolioRows}
+              portfolioLoading={portfolioLoading}
+              portfolioError={portfolioError}
+              routeContentMarginClass={routeContentMarginClass}
+              flowHeightClass={flowHeightClass}
+              loading={loading}
+              onSetRoute={setRoute}
+              onLoadPortfolio={() => void loadPortfolio()}
+              onLoadMultisigProposals={() => void loadMultisigProposals()}
+              onSetMultisigDetailProposalId={setMultisigDetailProposalId}
+              registerOpenSend={(open) => {
+                openSendRef.current = open
+              }}
+            />
 
             {!loading && route === 'receive' ? (
               <div
@@ -2909,57 +734,24 @@ export function LatchRoot({ surface }: { surface: Surface }) {
         ) : null}
 
         {renameAccountId ? (
-          <div
-            className="absolute inset-0 z-[100] flex justify-center bg-black/45 px-4 pt-[72px]"
-            role="presentation"
-            onClick={() => setRenameAccountId(null)}
-          >
-            <div
-              className="h-fit w-full max-w-[300px] rounded-2xl border border-border bg-surface/95 p-4 shadow-soft"
-              role="dialog"
-              aria-labelledby="rename-account-title"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div id="rename-account-title" className="text-sm font-extrabold">
-                Rename account
-              </div>
-              <input
-                value={renameDraft}
-                onChange={(e) => setRenameDraft(e.target.value)}
-                className="mt-3 w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm text-fg shadow-inner outline-none focus:border-primary"
-                maxLength={32}
-                autoFocus
-              />
-              <div className="mt-3 flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setRenameAccountId(null)}
-                  className="h-10 flex-1 rounded-full border border-border bg-bg text-sm font-extrabold text-fg hover:bg-surface/60"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!renameAccountId) return
-                    void sendToBackground<{ accountId: string; label?: string }, undefined>({
-                      type: 'RENAME_ACCOUNT',
-                      payload: {
-                        accountId: renameAccountId,
-                        label: renameDraft.trim() || undefined,
-                      },
-                    })
-                      .then(() => refreshAccounts())
-                      .then(() => setRenameAccountId(null))
-                      .catch(() => {})
-                  }}
-                  className="h-10 flex-1 rounded-full bg-primary text-sm font-extrabold text-black shadow-soft"
-                >
-                  Save
-                </button>
-              </div>
-            </div>
-          </div>
+          <RenameAccountDialog
+            renameDraft={renameDraft}
+            onDraftChange={setRenameDraft}
+            onCancel={() => setRenameAccountId(null)}
+            onSave={() => {
+              if (!renameAccountId) return
+              void sendToBackground<{ accountId: string; label?: string }, undefined>({
+                type: 'RENAME_ACCOUNT',
+                payload: {
+                  accountId: renameAccountId,
+                  label: renameDraft.trim() || undefined,
+                },
+              })
+                .then(() => refreshAccounts())
+                .then(() => setRenameAccountId(null))
+                .catch(() => {})
+            }}
+          />
         ) : null}
       </div>
 

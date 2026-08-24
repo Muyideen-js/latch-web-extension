@@ -13,8 +13,7 @@ import { resolveAccessToken } from '../api/v1Client'
 import { v1AuthWalletForLinkedAccount } from '../cosign/v1AuthWallet'
 import { getActiveNetwork } from '../network/config'
 import { getAccounts } from '../storage'
-
-type OkFn = (data?: unknown) => { ok: boolean; data?: unknown }
+import type { OkFn } from '../messageResponse'
 
 const FUNDABLE_MODES = new Set(['passkey', 'freighter', 'mnemonic', 'phantom'])
 

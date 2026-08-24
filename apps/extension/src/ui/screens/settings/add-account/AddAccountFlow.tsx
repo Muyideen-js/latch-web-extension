@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { startAuthentication, startRegistration } from '@simplewebauthn/browser'
 
 import type {
   BackendWebauthnAuthenticationFinishResponse,
@@ -18,12 +17,11 @@ import {
   assertBeginOptionsRpIdMatchesExtension,
   assertRegistrationCeremonyForFinish,
   enrichWebauthnRpIdHashErrorMessage,
-  formatWebauthnBrowserError,
   nextPasskeyAccountDisplayName,
   prepareAuthenticationOptionsForGet,
   prepareRegistrationOptionsForCreate,
 } from '../../../webauthn/passkey'
-import { openPasskeyBridgeAndWait } from '../../../webauthn/passkeyBridge'
+import { runWebauthnCredential } from '../../../webauthn/runWebauthnCredential'
 import { AddAccountChooseMethodScreen, type AddAccountMethod } from './AddAccountChooseMethodScreen'
 import { AddAccountCreatePasskeyScreen } from './AddAccountCreatePasskeyScreen'
 import { AddAccountCreateScreen } from './AddAccountCreateScreen'
@@ -151,18 +149,7 @@ export function AddAccountFlow({
   const runPasskeyAuthentication = useCallback(
     async (optionsJSON: unknown) => {
       assertBeginOptionsRpIdMatchesExtension(optionsJSON)
-
-      if (surface === 'sidepanel') {
-        return await openPasskeyBridgeAndWait({ mode: 'authentication', optionsJSON })
-      }
-
-      try {
-        return await startAuthentication({
-          optionsJSON,
-        } as Parameters<typeof startAuthentication>[0])
-      } catch (e) {
-        throw new Error(formatWebauthnBrowserError(e))
-      }
+      return await runWebauthnCredential(surface, 'authentication', optionsJSON)
     },
     [surface]
   )
@@ -170,18 +157,7 @@ export function AddAccountFlow({
   const runPasskeyRegistration = useCallback(
     async (optionsJSON: unknown) => {
       assertBeginOptionsRpIdMatchesExtension(optionsJSON)
-
-      if (surface === 'sidepanel') {
-        return await openPasskeyBridgeAndWait({ mode: 'registration', optionsJSON })
-      }
-
-      try {
-        return await startRegistration({
-          optionsJSON,
-        } as Parameters<typeof startRegistration>[0])
-      } catch (e) {
-        throw new Error(formatWebauthnBrowserError(e))
-      }
+      return await runWebauthnCredential(surface, 'registration', optionsJSON)
     },
     [surface]
   )

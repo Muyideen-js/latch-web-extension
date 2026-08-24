@@ -5,8 +5,8 @@
   "packageManager": "pnpm@10.33.0",
   "scripts": {
     "setup": "pnpm install",
-    "dev": "turbo run dev",
-    "build": "turbo run build",
+    "dev": "node api.js && turbo run dev",
+    "build": "node api.js && turbo run build",
     "lint": "turbo run lint",
     "test": "turbo run test",
     "format": "prettier --write \"**/*.{ts,tsx,json,md}\"",

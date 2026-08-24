@@ -1,4 +1,5 @@
 import type {
+  BackgroundMessage,
   BuildSwapTxRequest,
   GetSwapQuoteRequest,
   GetSwapQuoteResponse,
@@ -7,6 +8,7 @@ import type {
   PrepareSwapTxRequest,
   PrepareSwapTxResponse,
   SendSignerType,
+  SetupSwapRulesRequest,
   SwapQuotePayload,
   SwapTokenRow,
   StoredAccount,
@@ -21,7 +23,8 @@ import {
   type SwapQuote,
 } from '@latch/swap'
 
-import { BackendError, buildSwapTx, prepareSign } from '../backend'
+import { BackendError, buildSwapTx, prepareSign, setupSwapRules } from '../backend'
+import type { OkFn } from '../messageResponse'
 import { getActiveNetwork, networkPassphraseFor, sorobanRpcUrlFor } from '../network/config'
 import { getAccounts } from '../storage'
 import {
@@ -236,4 +239,45 @@ export async function runPrepareSwapTx(req: PrepareSwapTxRequest): Promise<Prepa
   })
 
   return prepared
+}
+
+/** Returns true if the message type was handled. */
+export async function tryHandleSwapMessage(
+  message: BackgroundMessage,
+  sendResponse: (response: unknown) => void,
+  ok: OkFn
+): Promise<boolean> {
+  switch (message.type) {
+    case 'GET_SWAP_TOKEN_CATALOG': {
+      const req = message.payload as GetSwapTokenCatalogRequest
+      const data = await runGetSwapTokenCatalog(req)
+      sendResponse(ok(data))
+      return true
+    }
+
+    case 'GET_SWAP_QUOTE': {
+      const req = message.payload as GetSwapQuoteRequest
+      const data = await runGetSwapQuote(req)
+      sendResponse(ok(data))
+      return true
+    }
+
+    case 'PREPARE_SWAP_TX': {
+      const req = message.payload as PrepareSwapTxRequest
+      const data = await runPrepareSwapTx(req)
+      sendResponse(ok(data))
+      return true
+    }
+
+    case 'SETUP_SWAP_RULES': {
+      const req = message.payload as SetupSwapRulesRequest
+      const network = req.network ?? (await getActiveNetwork())
+      const data = await setupSwapRules({ ...req, network })
+      sendResponse(ok(data))
+      return true
+    }
+
+    default:
+      return false
+  }
 }
