@@ -9,8 +9,7 @@ import {
 import { v1AuthWalletForLinkedAccount } from '../cosign/v1AuthWallet'
 import { getActiveNetwork } from '../network/config'
 import { getAccounts } from '../storage'
-
-type OkFn = (data?: unknown) => { ok: boolean; data?: unknown }
+import type { OkFn } from '../messageResponse'
 
 /**
  * Handles V1 JWT ensure / challenge / sign-in messages (shared by Fund and cosign UI).

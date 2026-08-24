@@ -22,22 +22,22 @@ packages/
 
 ## Extension Execution Contexts
 
-| Context        | File                                      | Rule                                                               |
-| -------------- | ----------------------------------------- | ------------------------------------------------------------------ |
-| Popup          | `apps/extension/src/popup/index.tsx`      | Primary UI surface. No key material. Sends messages to background. |
-| Side panel     | `apps/extension/src/sidepanel/index.tsx`  | Same rules as popup: no key material; messages to background only. |
-| Background SW  | `apps/extension/src/background/index.ts`  | ONLY context allowed to hold keys / sign.                          |
-| Content Script | `apps/extension/src/contents/injector.ts` | Proxy only. Bridges dapp ↔ background.                             |
+| Context        | File                                                         | Rule                                                                                    |
+| -------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| Popup          | `apps/extension/src/popup/index.tsx`                         | Primary UI surface. No key material. Sends messages to background.                      |
+| Side panel     | `apps/extension/src/sidepanel/index.tsx`                     | Same rules as popup: no key material; messages to background only.                      |
+| Background SW  | `apps/extension/src/background/index.ts` (+ `*/handlers.ts`) | ONLY context allowed to hold keys / sign. Message routing is a thin `tryHandle*` chain. |
+| Content Script | `apps/extension/src/contents/injector.ts`                    | Proxy only. Bridges dapp ↔ background.                                                  |
 
 **Never import `@latch/crypto` outside the background service worker.**
 
 ### Popup vs side panel (feature parity)
 
-- Wallet UX is implemented in **`apps/extension/src/ui/LatchRoot.tsx`** (and screens under `apps/extension/src/ui/screens/*`). Both **popup** and **side panel** mount the same `LatchRoot` tree with a `surface` prop (`"popup"` | `"sidepanel"`) for layout only.
+- Wallet UX is implemented in **`apps/extension/src/ui/LatchRoot.tsx`** (shell: accounts hydrate, routing, shared portfolio/history, overlays) plus feature **`*RouteViews`** under `apps/extension/src/ui/{swap,send,accounts,dapp,multisig}/` and screens under `apps/extension/src/ui/screens/*`. Route types and WebAuthn mount helpers live in [`apps/extension/src/ui/routing/routes.ts`](apps/extension/src/ui/routing/routes.ts). Both **popup** and **side panel** mount the same `LatchRoot` tree with a `surface` prop (`"popup"` | `"sidepanel"`) for layout only.
 - **Do not ship flows that work in one surface but not the other** unless you document an explicit, product-approved exception in this file. Onboarding, passkey create/login, settings, and signing flows must behave the same in popup and side panel.
 - Avoid long `await` chains between a **user click** and **`navigator.credentials`** (WebAuthn): transient user activation is easier to lose in the side panel than in the popup; keep pre-credential work minimal.
-- **Do not swap the whole route for a generic loading screen** between the click and WebAuthn: unmounting the control that received the gesture can prevent the passkey UI from appearing (especially in the side panel). Keep passkey-related screens mounted and use inline disabled/busy state instead (see `routeKeepsUiMountedForWebauthn` in `LatchRoot.tsx`).
-- **Side panel WebAuthn**: Chrome often does not complete `navigator.credentials` in the side panel (hangs with no OS prompt). Latch **prefetches** `/begin` on the Create / Passkey-login screens, then runs `startRegistration` / `startAuthentication` in a small **`tabs/passkey-bridge`** extension popup (`chrome.windows` + `chrome.storage.session` handoff). The action toolbar **popup** keeps in-page WebAuthn. Both surfaces use the same backend finish calls.
+- **Do not swap the whole route for a generic loading screen** between the click and WebAuthn: unmounting the control that received the gesture can prevent the passkey UI from appearing (especially in the side panel). Keep passkey-related screens mounted and use inline disabled/busy state instead (see `routeKeepsUiMountedForWebauthn` in [`routing/routes.ts`](apps/extension/src/ui/routing/routes.ts)).
+- **Side panel WebAuthn**: Chrome often does not complete `navigator.credentials` in the side panel (hangs with no OS prompt). Latch **prefetches** `/begin` on the Create / Passkey-login screens, then runs `startRegistration` / `startAuthentication` in a small **`tabs/passkey-bridge`** extension popup (`chrome.windows` + `chrome.storage.session` handoff) via [`runWebauthnCredential`](apps/extension/src/ui/webauthn/runWebauthnCredential.ts). The action toolbar **popup** keeps in-page WebAuthn. Both surfaces use the same backend finish calls.
 
 ## Tech Stack
 
@@ -67,10 +67,11 @@ packages/
 
 - **Popup / side panel UI (`apps/extension/src/popup/*`, `apps/extension/src/sidepanel/*`, `apps/extension/src/ui/*`)**: UI-only. No secrets. **Do not** talk to RPCs/APIs directly except for truly public, low-risk reads (and even then, prefer the background for consistency).
 - **Content script (`apps/extension/src/contents/*`)**: proxy only. **Never** fetch from the page context and never embed business logic. Bridge dapp ↔ background.
-- **Background service worker (`apps/extension/src/background/index.ts`)**: **the place for network + privileged work**:
+- **Background service worker (`apps/extension/src/background/index.ts` + feature `*/handlers.ts`)**: **the place for network + privileged work**:
   - signing, vault access, key derivation
   - RPC/API requests that depend on user state, authorization, rate-limits, or consistency
   - caching, de-duping, retries/backoff, request cancellation
+  - message routing: thin `tryHandle*` chain (accounts, tx, reads, swap, migration, network, dapp, onboarding, plus existing multisig/v1Auth/deposit)
 
 ### Architecture: one network “edge” in the background
 
@@ -120,15 +121,22 @@ Render onboarding until `setupState === "has_account"`, then the dashboard/home 
 
 ### WebAuthn / passkey (Chrome extension)
 
-The background sends **`chromeExtensionId`** (`chrome.runtime.id` in the service worker) on WebAuthn-related API calls so the **Latch API** can issue and verify credentials for the **`chrome-extension://`** origin.
+Passkeys use a **shared HTTPS-domain RP ID** so the same credential can work in the Chrome extension, a future Latch website, and associated native apps.
 
-**Contract for the Latch API** (registration begin/finish, authentication begin/finish, and any route that verifies WebAuthn assertions, e.g. submit-webauthn):
+- **RP ID:** `PLASMO_PUBLIC_WEBAUTHN_RP_ID` (default `latch-testing.vercel.app`). Hostname only — never `chrome.runtime.id`.
+- **Origins:** ceremonies from the extension produce `clientDataJSON.origin = chrome-extension://<chrome.runtime.id>`. Web ceremonies use `https://latch-testing.vercel.app`. The Latch API must allowlist both as `expectedOrigins` while always verifying `expectedRPID` = the domain.
+- The background still sends **`chromeExtensionId`** (`chrome.runtime.id`) on WebAuthn-related API calls as an **origin hint only** — not as `rp.id`.
 
-- Accept optional **`chromeExtensionId`** on the JSON body when the client is the extension.
-- When `chromeExtensionId` is present, set **`rp.id` / `rpId`** in issued WebAuthn options to that value (not `localhost` or a website hostname).
-- On **`verifyRegistrationResponse` / `verifyAuthenticationResponse`** (or equivalent), set **`expectedRPID`** to **`chromeExtensionId`** and **`expectedOrigin`** to **`chrome-extension://<chromeExtensionId>`** (use the same values on **finish** as on **begin**; prefer the **`chromeExtensionId` on the finish body** if session storage is unreliable).
+**Contract for the Latch API** (registration begin/finish, authentication begin/finish, and any route that verifies WebAuthn assertions):
 
-The extension merges **`chromeExtensionId`** into begin, registration finish, authentication finish, and **`submitTxWebauthn`** request bodies from [`api/webauthn.ts`](apps/extension/src/background/api/webauthn.ts) and [`api/transactions.ts`](apps/extension/src/background/api/transactions.ts). The UI asserts server-issued **`rp.id` / `rpId`** matches **`chrome.runtime.id`** before calling `startRegistration` / `startAuthentication` (see [`passkey.ts`](apps/extension/src/ui/webauthn/passkey.ts)).
+- Always set **`rp.id` / `rpId`** = `WEBAUTHN_RP_ID` (`latch-testing.vercel.app`), for both web and extension clients.
+- When `chromeExtensionId` is present, include **`chrome-extension://<chromeExtensionId>`** in **`expectedOrigins`** (do **not** set `expectedRPID` to the extension id).
+- Also allow `https://latch-testing.vercel.app` in `expectedOrigins`.
+- Prefer the finish-body `chromeExtensionId` if session storage is unreliable.
+
+Full backend cutover guide: [`LATCH_BACKEND_DOMAIN_WEBAUTHN_RPID.md`](LATCH_BACKEND_DOMAIN_WEBAUTHN_RPID.md).
+
+The extension merges **`chromeExtensionId`** into begin, registration finish, authentication finish, and **`submitTxWebauthn`** request bodies from [`api/webauthn.ts`](apps/extension/src/background/api/webauthn.ts) and [`api/transactions.ts`](apps/extension/src/background/api/transactions.ts). The UI asserts server-issued **`rp.id` / `rpId`** matches **`latchWebauthnRpId()`** before calling `startRegistration` / `startAuthentication` (see [`passkey.ts`](apps/extension/src/ui/webauthn/passkey.ts) → `assertBeginOptionsRpIdMatchesCanonicalDomain`). Extension manifest must include host permission `https://latch-testing.vercel.app/*` so Chrome can claim that RP ID from extension pages.
 
 ### Multisig wallets (`/api/multisig` — shipped)
 
@@ -141,7 +149,7 @@ The extension merges **`chromeExtensionId`** into begin, registration finish, au
 - **Join flow**: deep link or Settings → Multisig Wallets; [`MultisigJoinFlow`](apps/extension/src/ui/multisig/MultisigJoinFlow.tsx) uses **`MULTISIG_JOIN_*`**, then pending invite + sync so members get `smartAccountAddress` + `multisigMemberId`.
 - **Send**: when the active account is multisig, Send creates a backend proposal via `createMultisigSendProposalWithSetup` (`MULTISIG_CREATE_PROPOSAL`). **Swap is disabled** for multisig accounts.
 - **Proposals**: list/detail; approve via [`multisigApprove.ts`](apps/extension/src/ui/lib/multisigApprove.ts); execute via **`MULTISIG_EXECUTE_PROPOSAL`** when threshold met.
-- **Side panel WebAuthn**: use **passkey-bridge** for join and proposal approve. Routes that trigger WebAuthn must stay mounted — see `routeKeepsUiMountedForWebauthn` in [`LatchRoot.tsx`](apps/extension/src/ui/LatchRoot.tsx) (`addMultisigOwners`, `joinMultisig`, `multisigProposalDetail`).
+- **Side panel WebAuthn**: use **passkey-bridge** for join and proposal approve. Routes that trigger WebAuthn must stay mounted — see `routeKeepsUiMountedForWebauthn` in [`routing/routes.ts`](apps/extension/src/ui/routing/routes.ts) (`addMultisigOwners`, `joinMultisig`, `multisigProposalDetail`).
 
 **Cosign / `/v1/cosign` — superseded / not shipped.** Source under `background/cosign/*`, `ui/lib/cosign*`, and `CosignRouteViews` remains on disk but is **unwired** from `background/index.ts` and `LatchRoot`. Do not route new product work through cosign; see [`LATCH_BACKEND_COSIGN_EXTENSION.md`](LATCH_BACKEND_COSIGN_EXTENSION.md).
 

@@ -4,8 +4,8 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "dev": "plasmo dev",
-    "build": "plasmo build",
+    "dev": "node init && plasmo dev",
+    "build": "node init && plasmo build",
     "lint": "eslint src --ext .ts,.tsx",
     "test": "vitest run",
     "package": "plasmo package",
