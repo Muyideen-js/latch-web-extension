@@ -44,8 +44,7 @@ import {
   ensureMultisigAccountRegisteredForSession,
   syncLocalMultisigAccountsFromBackend,
 } from './syncLocalAccounts'
-
-type OkFn = (data?: unknown) => { ok: boolean; data?: unknown }
+import type { OkFn } from '../messageResponse'
 
 /** Returns true if the message type was handled. */
 export async function tryHandleMultisigMessage(
